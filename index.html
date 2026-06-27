@@ -1788,7 +1788,30 @@
     renderClientes();
   }
 
+  // Récupère les fiches clientes (profil + journal + analyse ELYA) depuis le cloud
+  // — alimentées automatiquement par le site principal.
+  async function loadCloudFiches() {
+    var client = window._supabaseClient || window.supabase;
+    if (!client || !client.from) return;
+    try {
+      var res = await client.from('client_fiches').select('*').order('updated_at', { ascending: false });
+      if (res.error) { console.warn('Fiches cloud:', res.error.message); return; }
+      window._cloudFiches = res.data || [];
+      if (!Array.isArray(state.clientes)) state.clientes = [];
+      window._cloudFiches.forEach(function (f) {
+        if (!f.email) return;
+        var ex = state.clientes.find(function (c) { return c.email && c.email.toLowerCase() === f.email.toLowerCase(); });
+        if (ex) { ex._cloudFiche = f; if (!ex.texture) ex.texture = f.texture; if (!ex.porosite) ex.porosite = f.porosite; }
+        else {
+          state.clientes.push({ nom: f.name || f.email.split('@')[0], email: f.email, texture: f.texture || '', porosite: f.porosite || '', densite: f.densite || '', objectif: f.objectif || '', nbSessions: 0, source: 'plateforme', _cloudFiche: f });
+        }
+      });
+      if (typeof currentTab !== 'undefined' && currentTab === 'clientes' && typeof renderTab === 'function') renderTab('clientes');
+    } catch (e) { console.warn('Fiches cloud:', e && e.message); }
+  }
+
   function renderClientes() {
+    if (!window._fichesLoaded) { window._fichesLoaded = true; loadCloudFiches(); }
     const filtre = state.clientesFiltre || 'tous';
     const search = state.clientesSearch || '';
     const filtered = state.clientes.filter(c => {
@@ -1892,6 +1915,19 @@
           <p style="font-size:9px;color:rgba(245,245,220,0.3);">${c.email||''}</p>
         </div>
       </div>
+
+      <!-- ANALYSE ELYA (depuis le journal de la cliente, mise à jour auto) -->
+      ${(function(){
+        var cf = c._cloudFiche || (window._cloudFiches||[]).find(function(f){ return f.email && c.email && f.email.toLowerCase()===c.email.toLowerCase(); });
+        if (!cf) return '';
+        var jr = (cf.journal_resume||[]).map(function(e){ return '• '+(e.date||'')+' — '+(e.title||'')+(e.indicators?(' [Hyd '+(e.indicators.hyd||'?')+'/5 · Casse '+(e.indicators.cas||'?')+'/5]'):''); }).join('<br>');
+        return '<div style="border:1px solid rgba(160,200,180,0.3);background:rgba(160,200,180,0.04);padding:1.25rem;margin-bottom:1rem;">'
+          + '<p class="font-cinzel" style="font-size:8px;letter-spacing:0.3em;color:rgba(160,210,185,0.85);text-transform:uppercase;margin-bottom:0.6rem;">✦ Analyse ELYA · mise à jour automatique</p>'
+          + '<p style="font-size:11px;color:rgba(245,245,220,0.72);line-height:1.7;">'+(cf.elya_analyse||'—')+'</p>'
+          + (jr?('<p style="font-size:8px;letter-spacing:0.2em;color:rgba(245,245,220,0.3);text-transform:uppercase;margin:0.9rem 0 0.4rem;font-family:Cinzel,serif;">Journal récent ('+(cf.nb_journal||0)+' entrées)</p><p style="font-size:10px;color:rgba(245,245,220,0.5);line-height:1.8;">'+jr+'</p>'):'')
+          + '<p style="font-size:8px;color:rgba(245,245,220,0.25);margin-top:0.75rem;">Source : journal de la cliente · '+(cf.updated_at?new Date(cf.updated_at).toLocaleDateString('fr-FR'):'—')+'</p>'
+          + '</div>';
+      })()}
 
       <!-- GRILLE FICHE MÉDICALE -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
