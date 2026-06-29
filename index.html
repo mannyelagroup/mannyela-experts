@@ -321,9 +321,49 @@
     .upload-zone:hover { border-color: rgba(245,245,220,0.35); background: rgba(245,245,220,0.02); }
 
     @media (max-width: 768px) {
-      .sidebar { width: 60px; }
+      /* La barre latérale devient une barre horizontale défilante en haut */
+      .sidebar {
+        position: static;
+        width: 100%;
+        height: auto;
+        flex-direction: row;
+        align-items: center;
+        border-right: none;
+        border-bottom: 1px solid rgba(245,245,220,0.06);
+        overflow-x: auto;
+        overflow-y: hidden;
+      }
+      .sidebar-logo { padding: 0.5rem 0.75rem !important; flex-shrink: 0; }
+      .sidebar-logo img { max-height: 26px; }
+      .sidebar-nav {
+        flex-direction: row !important;
+        padding: 0 !important;
+        overflow-x: auto;
+        overflow-y: hidden;
+        flex-wrap: nowrap;
+        flex: 1;
+      }
+      .nav-item {
+        white-space: nowrap;
+        flex-shrink: 0;
+        border-left: none !important;
+        border-bottom: 2px solid transparent;
+        padding: 0.6rem 0.8rem;
+      }
       .sidebar span.label { display: none; }
-      .main-content { margin-left: 60px; padding: 1rem; }
+      .sidebar-bottom { display: none !important; }
+      .main-content { margin-left: 0 !important; padding: 1rem !important; min-height: auto; }
+
+      /* Grilles : réduire / empiler pour les petits écrans */
+      #main-content [style*="grid-template-columns:repeat(4,1fr)"] { grid-template-columns: repeat(2,1fr) !important; }
+      #main-content [style*="grid-template-columns:repeat(3,1fr)"] { grid-template-columns: repeat(2,1fr) !important; }
+      #main-content [style*="280px 1fr"],
+      #main-content [style*="260px 1fr"],
+      #main-content [style*="grid-template-columns:1fr 1fr 1fr"],
+      #main-content [style*="1.5fr 0.8fr"] { grid-template-columns: 1fr !important; }
+      /* Calendriers / tableaux larges : défilement horizontal plutôt que débordement coupé */
+      #main-content [style*="repeat(7,1fr)"] { min-width: 440px; }
+      #main-content { overflow-x: hidden; }
     }
 
     @keyframes spin { to { transform: rotate(360deg); } }
