@@ -6204,5 +6204,61 @@ FORMAT DE RÉPONSE :
 </script>
 
   <script src="auth.js"></script>
+
+  <!-- Marqueur de version -->
+  <div id="exp-version" style="position:fixed;bottom:4px;left:6px;font-size:9px;color:rgba(196,149,106,0.5);font-family:'Cinzel',serif;letter-spacing:0.12em;z-index:99999;pointer-events:none;">✦ exp-v2 · 24-06</div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       CONNEXION EXPERTE "local-first" — placé en TOUT DERNIER pour neutraliser
+       le remplacement Supabase-only de auth.js. Restaure le compte fondatrice
+       et les comptes experts locaux (ACCOUNTS).
+       ═══════════════════════════════════════════════════════════════════════ -->
+  <script>
+  (function () {
+    function expertLocalLogin() {
+      var emailEl = document.getElementById('login-email');
+      var pwdEl   = document.getElementById('login-password');
+      var errEl   = document.getElementById('login-error');
+      var email = (emailEl ? emailEl.value : '').trim().toLowerCase();
+      var pwd   = (pwdEl ? pwdEl.value : '').replace(/[\r\n\t]/g, '').trim();
+      function fail(m) { if (errEl) { errEl.textContent = m; errEl.style.display = 'block'; } }
+      if (!email || !pwd) { fail('Identifiant et mot de passe requis'); return; }
+      var acc = (typeof ACCOUNTS !== 'undefined') ? ACCOUNTS[email] : null;
+      if (!acc) { fail('Email non reconnu. Vérifiez votre adresse.'); return; }
+      var pwdMatch = (acc.pwd === pwd)
+        || (function () { try { return atob(acc.pwd) === pwd; } catch (e) { return false; } }())
+        || (acc.pwd === btoa(pwd));
+      if (!pwdMatch) { fail('Mot de passe incorrect.'); return; }
+      if (acc.actif === false) { fail('Votre compte est en attente de validation par notre équipe.'); return; }
+      if (errEl) errEl.style.display = 'none';
+      try { acc.derniereConnexion = new Date().toISOString().split('T')[0]; } catch (e) {}
+      expert = Object.assign({}, acc, { email: email });
+      var ls = document.getElementById('login-screen'); if (ls) ls.style.display = 'none';
+      var db = document.getElementById('dashboard'); if (db) db.style.display = 'block';
+      try {
+        var badgeLabel = acc.isAdmin ? '✦ Admin'
+          : acc.badge === 'candidature' ? '⏳ Candidature en cours'
+          : (acc.niveau === 'Experte Mannyela' || acc.niveau === 'Admin') ? '✦ Experte Mannyela'
+          : acc.badge === 'reseau' ? '◈ Experte Réseau'
+          : (acc.niveau || 'Experte');
+        var sn = document.getElementById('sidebar-name');
+        if (sn) sn.innerHTML = acc.name + '<br/><span style="font-size:7px;letter-spacing:0.15em;color:'
+          + (acc.isAdmin || acc.niveau === 'Experte Mannyela' ? 'rgba(196,149,106,0.8)' : 'rgba(126,200,164,0.6)')
+          + ';">' + badgeLabel + '</span>';
+        var an = document.getElementById('admin-nav-item'); if (an) an.style.display = (acc.isAdmin === true) ? 'flex' : 'none';
+        var ap = document.getElementById('nav-admin-prix'); if (ap) ap.style.display = (acc.isAdmin === true) ? 'flex' : 'none';
+      } catch (e) {}
+      try { if (typeof chargerPrixSauvegardes === 'function') chargerPrixSauvegardes(); } catch (e) {}
+      try { if (typeof chargerPrixExperte === 'function') chargerPrixExperte(); } catch (e) {}
+      try { if (typeof chargerPrefsExperte === 'function') chargerPrefsExperte(); } catch (e) {}
+      try { if (typeof syncClientesDepuisReservations === 'function') syncClientesDepuisReservations(); } catch (e) {}
+      try { if (typeof showTab === 'function') showTab('accueil'); } catch (e) {}
+      try { if (typeof syncExpertePublique === 'function') syncExpertePublique(); } catch (e) {}
+      try { if (typeof lucide !== 'undefined') lucide.createIcons(); } catch (e) {}
+    }
+    window.login = expertLocalLogin;
+    document.addEventListener('DOMContentLoaded', function () { window.login = expertLocalLogin; });
+  })();
+  </script>
 </body>
 </html>
