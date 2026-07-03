@@ -379,6 +379,33 @@
     }
 
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Barre de défilement élégante pour les zones de messages (ELYA Pro + messagerie) */
+    #elya-pro-scroll::-webkit-scrollbar,
+    #elya-scroll::-webkit-scrollbar,
+    .msg-scroll::-webkit-scrollbar { width: 9px; }
+    #elya-pro-scroll::-webkit-scrollbar-track,
+    #elya-scroll::-webkit-scrollbar-track,
+    .msg-scroll::-webkit-scrollbar-track { background: rgba(245,245,220,0.03); border-radius: 8px; }
+    #elya-pro-scroll::-webkit-scrollbar-thumb,
+    #elya-scroll::-webkit-scrollbar-thumb,
+    .msg-scroll::-webkit-scrollbar-thumb {
+      background: rgba(196,149,106,0.45);
+      border-radius: 8px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    #elya-pro-scroll::-webkit-scrollbar-thumb:hover,
+    #elya-scroll::-webkit-scrollbar-thumb:hover,
+    .msg-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(196,149,106,0.7);
+      background-clip: padding-box;
+    }
+    #elya-pro-scroll, #elya-scroll, .msg-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(196,149,106,0.45) rgba(245,245,220,0.03);
+      scroll-behavior: smooth;
+    }
     </style>
   <!-- ══ SUPABASE AUTH ══════════════════════════════════════════════════ -->
   <script>
@@ -1337,10 +1364,11 @@
           <p class="font-cinzel" style="font-size:9px;letter-spacing:0.4em;color:rgba(245,245,220,0.3);text-transform:uppercase;margin-bottom:0.3rem;">Planning</p>
           <h2 class="font-cinzel" style="font-size:1.4rem;color:rgba(245,245,220,0.85);">Mes Rendez-vous</h2>
         </div>
-        <div style="display:flex;gap:0.5rem;align-items:center;">
+        <div style="display:flex;gap:0.75rem;align-items:center;">
           <span style="font-size:9px;color:rgba(245,245,220,0.25);font-family:'Cinzel',serif;">
             ${weekDays[0].toLocaleDateString('fr-FR',{day:'numeric',month:'short'})} – ${weekDays[6].toLocaleDateString('fr-FR',{day:'numeric',month:'short'})}
           </span>
+          <button onclick="ouvrirNouveauRDV()" style="font-family:'Cinzel',serif;font-size:8px;letter-spacing:0.15em;text-transform:uppercase;padding:0.5rem 1rem;border:1px solid rgba(196,149,106,0.4);color:rgba(196,149,106,0.9);background:rgba(196,149,106,0.08);cursor:pointer;">+ Nouveau RDV</button>
         </div>
       </div>
 
@@ -2048,7 +2076,7 @@
               style="font-family:'Cinzel',serif;font-size:8px;letter-spacing:0.15em;text-transform:uppercase;padding:0.55rem;border:1px solid rgba(196,149,106,0.3);color:rgba(196,149,106,0.7);background:transparent;cursor:pointer;">
               + Compte-rendu
             </button>
-            <button onclick="state.ficheClienteOuverte=null;showTab('rdv')"
+            <button onclick="ouvrirNouveauRDV('${c.email||''}')"
               style="font-family:'Cinzel',serif;font-size:8px;letter-spacing:0.15em;text-transform:uppercase;padding:0.55rem;border:1px solid rgba(126,200,164,0.3);color:rgba(126,200,164,0.7);background:transparent;cursor:pointer;">
               + Nouveau RDV
             </button>
@@ -2869,7 +2897,7 @@ FORMAT DE RÉPONSE :
           'Authorization': 'Bearer mck83XTGLMm9HlPGLvD5bKOFg22coThW',
         },
         body: JSON.stringify({
-          agent_id: atob('YWdfMDE5ZGM2Yzc4ODgyNzYxZjhmMjhhNzJmOTVjMWU1NQ=='),
+          agent_id: atob('YWdfMDE5ZGM2Yzc4ODgyNzYxZjhlMjhhN2YyZjk1YzFlNTU='),
           max_tokens: 800,
           messages: history
         })
@@ -5462,12 +5490,14 @@ FORMAT DE RÉPONSE :
 
   // ── Portail Stripe — gestion carte et factures (Experte) ─────────────────
   function ouvrirStripePortailExperte(action) {
-    var msg = action === 'invoices'
-      ? 'Vos factures seront disponibles dans le portail Stripe après activation en production.'
-      : 'La gestion de carte sera disponible dans le portail Stripe en production.';
-    notif(msg);
-    // En production : fetch('/api/stripe-portal-experte', { method:'POST', body: JSON.stringify({ customerId: expert.stripeCustomerId, action }) })
-    //   .then(r=>r.json()).then(d=>window.open(d.url,'_blank'))
+    var links = window.EXPERTE_PAYMENT_LINKS || {};
+    var isMannyela = expert && (expert.badge === 'mannyela' || /Mannyela/.test(expert.niveau || ''));
+    var url = isMannyela ? links.mannyela : links.reseau;
+    if (url && /^https?:\/\//.test(url)) {
+      window.open(url, '_blank', 'noopener');
+    } else {
+      notif('Le paiement d\'abonnement sera disponible très bientôt.');
+    }
   }
 
   // ═══ DIAGNOSTIC CAPILLAIRE IA ═══════════════════════════════════════════
@@ -6243,7 +6273,7 @@ FORMAT DE RÉPONSE :
   <script src="auth.js"></script>
 
   <!-- Marqueur de version -->
-  <div id="exp-version" style="position:fixed;bottom:4px;left:6px;font-size:9px;color:rgba(196,149,106,0.5);font-family:'Cinzel',serif;letter-spacing:0.12em;z-index:99999;pointer-events:none;">✦ exp-v6 · 24-06</div>
+  <div id="exp-version" style="position:fixed;bottom:4px;left:6px;font-size:9px;color:rgba(196,149,106,0.5);font-family:'Cinzel',serif;letter-spacing:0.12em;z-index:99999;pointer-events:none;">✦ exp-v12 · 24-06</div>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
        CONNEXION EXPERTE "local-first" — placé en TOUT DERNIER pour neutraliser
@@ -6251,6 +6281,14 @@ FORMAT DE RÉPONSE :
        et les comptes experts locaux (ACCOUNTS).
        ═══════════════════════════════════════════════════════════════════════ -->
   <script>
+  /* ═══ LIENS DE PAIEMENT ABONNEMENT EXPERTE (Stripe) ═══
+     Collez ici vos 2 liens Stripe (buy.stripe.com/...) :
+     - mannyela : abonnement Experte Mannyela 39,90 €/mois
+     - reseau   : abonnement Experte Réseau 49,90 €/mois (3 mois) puis 59,90 €/mois */
+  window.EXPERTE_PAYMENT_LINKS = {
+    mannyela: 'https://buy.stripe.com/5kQ00b38lfeh0S88s6eIw05',
+    reseau: 'https://buy.stripe.com/9B6bIT38l0jnbwM6jYeIw06?prefilled_promo_code=RESEAU2026'
+  };
   (function () {
     function _sb() { return window._supabaseClient || window.supabase; }
 
@@ -6331,6 +6369,7 @@ FORMAT DE RÉPONSE :
       try { if (typeof chargerPrixExperte === 'function') chargerPrixExperte(); } catch (e) {}
       try { if (typeof chargerPrefsExperte === 'function') chargerPrefsExperte(); } catch (e) {}
       try { if (typeof syncClientesDepuisReservations === 'function') syncClientesDepuisReservations(); } catch (e) {}
+      try { if (typeof window.loadRdvsExperte === 'function') window.loadRdvsExperte(); } catch (e) {}
       try { if (typeof showTab === 'function') showTab('accueil'); } catch (e) {}
       try { if (typeof syncExpertePublique === 'function') syncExpertePublique(); } catch (e) {}
       try { if (typeof lucide !== 'undefined') lucide.createIcons(); } catch (e) {}
@@ -6380,6 +6419,68 @@ FORMAT DE RÉPONSE :
         _enterDashboard(cloudAcc, email);
       });
     }
+
+    // ── RENDEZ-VOUS MANUELS (synchronisés vers le compte cliente) ───────────
+    var _rdvInp = 'width:100%;background:rgba(255,255,255,0.03);border:1px solid rgba(245,245,220,0.12);padding:0.6rem 0.75rem;color:rgba(245,245,220,0.85);font-size:12px;font-family:Montserrat,sans-serif;outline:none;margin-bottom:0.7rem;';
+    window.ouvrirNouveauRDV = function (clienteEmail) {
+      var opts = '<option value="">— Choisir une cliente —</option>' + (state.clientes || []).map(function (c) {
+        return '<option value="' + (c.email || '') + '" data-nom="' + (c.nom || '') + '"' + ((clienteEmail && c.email === clienteEmail) ? ' selected' : '') + '>' + (c.nom || c.email) + '</option>';
+      }).join('');
+      var m = document.createElement('div');
+      m.id = 'rdv-modal';
+      m.style.cssText = 'position:fixed;inset:0;background:rgba(0,10,8,0.88);z-index:10000;display:flex;align-items:center;justify-content:center;padding:1rem;';
+      m.innerHTML = '<div style="width:100%;max-width:420px;background:#00120e;border:1px solid rgba(196,149,106,0.25);padding:1.75rem;max-height:92vh;overflow:auto;">'
+        + '<p class="font-cinzel" style="font-size:10px;letter-spacing:0.3em;color:rgba(196,149,106,0.75);text-transform:uppercase;margin-bottom:1.25rem;">✦ Nouveau rendez-vous</p>'
+        + '<select id="rdv-cliente" style="' + _rdvInp + '">' + opts + '</select>'
+        + '<input id="rdv-email" placeholder="…ou email de la cliente" style="' + _rdvInp + '"/>'
+        + '<input id="rdv-date" type="date" style="' + _rdvInp + 'color-scheme:dark;"/>'
+        + '<input id="rdv-heure" type="time" style="' + _rdvInp + 'color-scheme:dark;"/>'
+        + '<input id="rdv-presta" placeholder="Prestation (ex : Diagnostic capillaire)" style="' + _rdvInp + '"/>'
+        + '<input id="rdv-prix" type="number" placeholder="Prix €" style="' + _rdvInp + '"/>'
+        + '<div style="display:flex;gap:0.6rem;margin-top:0.5rem;">'
+        + '<button onclick="document.getElementById(\'rdv-modal\').remove()" style="flex:1;font-family:Cinzel,serif;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;padding:0.7rem;border:1px solid rgba(245,245,220,0.15);color:rgba(245,245,220,0.5);background:transparent;cursor:pointer;">Annuler</button>'
+        + '<button onclick="saveNouveauRDV()" style="flex:1;font-family:Cinzel,serif;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;padding:0.7rem;border:1px solid rgba(196,149,106,0.4);color:rgba(196,149,106,0.9);background:rgba(196,149,106,0.08);cursor:pointer;">Enregistrer ✦</button>'
+        + '</div></div>';
+      document.body.appendChild(m);
+    };
+    window.saveNouveauRDV = async function () {
+      var sel = document.getElementById('rdv-cliente');
+      var emailInput = (document.getElementById('rdv-email') || {}).value || '';
+      var email = (emailInput || (sel && sel.value) || '').trim().toLowerCase();
+      var nom = (sel && sel.selectedOptions && sel.selectedOptions[0]) ? (sel.selectedOptions[0].getAttribute('data-nom') || sel.selectedOptions[0].textContent) : '';
+      if (emailInput && !nom) nom = emailInput.split('@')[0];
+      var date = (document.getElementById('rdv-date') || {}).value;
+      var heure = (document.getElementById('rdv-heure') || {}).value || '';
+      var presta = (document.getElementById('rdv-presta') || {}).value || '';
+      var prix = parseFloat((document.getElementById('rdv-prix') || {}).value) || 0;
+      if (!email || !date) { if (typeof notif === 'function') notif('Cliente et date obligatoires'); return; }
+      var rdv = { cliente_email: email, cliente_nom: nom, experte_email: (expert && expert.email) || '', experte_nom: (expert && expert.name) || '', date: date, heure: heure, prestation: presta, prix: prix, statut: 'confirmé', source: 'experte' };
+      try {
+        var c = window._supabaseClient || window.supabase;
+        if (c && c.from) { var r = await c.from('rendez_vous').insert(rdv).select(); if (r.error) { if (typeof notif === 'function') notif('Erreur cloud : ' + r.error.message); } }
+      } catch (e) { if (typeof notif === 'function') notif('Erreur réseau'); }
+      if (!state.rdvs) state.rdvs = [];
+      state.rdvs.unshift({ id: Date.now(), cliente: nom, clienteEmail: email, date: date, heure: heure, prestation: presta, prix: prix, statut: 'confirmé' });
+      var el = document.getElementById('rdv-modal'); if (el) el.remove();
+      if (typeof notif === 'function') notif('RDV ajouté ✦ — visible sur le compte de la cliente');
+      if (typeof showTab === 'function') showTab('rdv');
+    };
+    window.loadRdvsExperte = async function () {
+      var c = window._supabaseClient || window.supabase;
+      if (!c || !c.from || !expert) return;
+      try {
+        var r = await c.from('rendez_vous').select('*').eq('experte_email', (expert.email || '').toLowerCase());
+        if (r && r.data) {
+          if (!state.rdvs) state.rdvs = [];
+          r.data.forEach(function (x) {
+            if (!state.rdvs.some(function (e) { return e.clienteEmail === x.cliente_email && e.date === x.date && e.heure === x.heure; })) {
+              state.rdvs.unshift({ id: x.id, cliente: x.cliente_nom, clienteEmail: x.cliente_email, date: x.date, heure: x.heure, prestation: x.prestation, prix: x.prix, statut: x.statut || 'confirmé' });
+            }
+          });
+          if (typeof currentTab !== 'undefined' && currentTab === 'rdv' && typeof renderTab === 'function') renderTab('rdv');
+        }
+      } catch (e) {}
+    };
 
     window.login = expertLocalLogin;
     document.addEventListener('DOMContentLoaded', function () { window.login = expertLocalLogin; });
