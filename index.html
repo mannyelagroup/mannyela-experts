@@ -6,54 +6,7 @@
   <title>Espace Experte · Mannyela</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=Montserrat:wght@300;400;500&display=swap" rel="stylesheet"/>
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js" onload="lucide.createIcons()">
-  // ── Sync experte publique → localStorage clientes ─────────────────────────
-  function syncExpertePublique() {
-    if (!expert || !expert.actif) return;
-    try {
-      var stored = JSON.parse(localStorage.getItem('mannyela_expertes_publiques') || '[]');
-      var isMannyela = typeof isExperteMannyela === 'function' ? isExperteMannyela(expert) : (expert.badge === 'mannyela' || expert.plan === 'mannyela');
-      var prestasPubliques = [];
-      try {
-        var prices = JSON.parse(localStorage.getItem('mannyela_expert_prices') || '{}');
-        if (typeof CATALOGUE !== 'undefined') {
-          CATALOGUE.forEach(function(cat) {
-            (cat.items || []).forEach(function(item) {
-              if (!item.supplement && item.public > 0) {
-                prestasPubliques.push({ nom: item.nom, prix: prices[item.nom] !== undefined ? prices[item.nom] : item.public, cat: cat.cat });
-              }
-            });
-          });
-        }
-      } catch(e2) {}
-      var profil = {
-        id: expert.email, email: expert.email, name: expert.name, nom: expert.name,
-        ville: expert.ville || '', adresse: expert.adresse || '', specialite: expert.specialite || '', bio: expert.bio || '',
-        avatar: expert.avatarUrl || expert.avatar || '',
-        niveau: isMannyela ? 'Experte Mannyela ✦' : 'Experte Réseau',
-        isRef: isMannyela, badge: expert.badge || 'reseau',
-        prestations: prestasPubliques.slice(0, 20),
-        portfolio: (typeof state !== 'undefined' && state.portfolio ? state.portfolio.filter(function(p){ return p.visible !== false; }) : []),
-        updatedAt: new Date().toISOString(),
-      };
-      var idx = stored.findIndex(function(e) { return e.email === expert.email; });
-      if (idx > -1) stored[idx] = profil; else stored.push(profil);
-      localStorage.setItem('mannyela_expertes_publiques', JSON.stringify(stored));
-      // ── Cloud : visible sur le site principal (Nos Expertes) + admin ──────
-      try {
-        var c = window._supabaseClient || window.supabase;
-        if (c && c.from) {
-          c.from('experts').upsert({
-            email: expert.email, name: expert.name, ville: profil.ville, specialite: profil.specialite,
-            bio: profil.bio, niveau: profil.niveau, is_ref: profil.isRef, prestations: profil.prestations,
-            photo: profil.avatar || null, actif: true, updated_at: new Date().toISOString()
-          }).then(function(){}, function(err){ console.warn('experts cloud:', err && err.message); });
-        }
-      } catch(eCloud) { console.warn('experts cloud:', eCloud); }
-    } catch(e) { console.warn('syncExpertePublique:', e); }
-  }
-
-</script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js" onload="lucide.createIcons()"></script>
   <script src="https://js.stripe.com/v3/"></script>
   <style>
     /* Logo blend mode — removes black background of JPEG logo on dark surfaces */
@@ -877,8 +830,16 @@
 
   function logout() {
     expert = null;
+    try {
+      if (typeof expertState !== 'undefined') {
+        expertState.isLoggedIn = false;
+        expertState.email = null;
+        expertState.loginMethod = null;
+      }
+    } catch(e) {}
     var dash = document.getElementById('dashboard');
     var ls = document.getElementById('login-screen');
+    if (!dash || !ls) return;
     // Hide dashboard first to avoid brief flash of login logo bg
     dash.style.opacity = '0';
     setTimeout(function() {
@@ -2132,9 +2093,12 @@
     clienteIdx: null,
     etapes: [],
     objectif: '',
-    produits: '',
+    produits: [],
     frequence: 'hebdomadaire',
+    prochainRDV: '',
+    prochainControle: ''
   };
+
 
   function renderRoutineBuilder() {
     const cliente = state.clientes[routineBuilder.clienteIdx];
@@ -2263,24 +2227,27 @@
 
   function envoyerRoutine() {
     const cliente = state.clientes[routineBuilder.clienteIdx];
+    if (!cliente) { notif('Sélectionnez une cliente'); return; }
+    if (!routineBuilder.objectif && (!routineBuilder.etapes || routineBuilder.etapes.length === 0)) { notif('Ajoutez un objectif ou une étape'); return; }
     const routinePayload = {
-      expertName: state.profil?.prenom || 'Votre experte',
+      expertName: (expert && (expert.name || expert.email)) || 'Votre experte',
       date: new Date().toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' }),
       description: routineBuilder.objectif || '',
       etapes: (routineBuilder.etapes || []).map(e => ({ titre: e.titre, detail: e.detail, frequence: e.freq, emoji: e.emoji })),
       produits: (routineBuilder.produits || []).map(p => ({ nom: p })),
-      prochainControle: routineBuilder.prochainControle || null
+      prochainRDV: routineBuilder.prochainRDV || null,
+      prochainControle: routineBuilder.prochainControle || routineBuilder.prochainRDV || null
     };
     const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(routinePayload))));
-    const linkBase = window.location.origin || 'https://mannyela.com';
-    const routineLink = linkBase.replace('experte.', '') + '?routine=' + encoded;
+    const linkBase = window.location.origin || 'https://mannyelagroup.com';
+    const routineLink = linkBase.replace('experts.', '').replace('experte.', '') + '?rituel=' + encoded;
     navigator.clipboard.writeText(routineLink).then(() => {
       notif('Lien copié — envoyez-le à ' + cliente.nom + ' ✦');
     }).catch(() => {
       showRoutineLinkModal(cliente.nom, routineLink);
     });
     state.rituelsEnvoyees = state.rituelsEnvoyees || [];
-    state.rituelsEnvoyees.push({ cliente: cliente.nom, date: new Date().toISOString(), routine: routinePayload });
+    state.rituelsEnvoyees.push({ cliente: cliente.nom, clienteEmail: cliente.email || '', date: new Date().toISOString(), routine: routinePayload });
     notif('Rituel prescrit pour ' + cliente.nom + ' ✦');
   }
 
@@ -3342,6 +3309,66 @@ FORMAT DE RÉPONSE :
     },
   ];
 
+  var CUSTOM_PRESTATIONS_KEY = 'mannyela_custom_prestations';
+
+  function normalizePrestaName(nom) {
+    return String(nom || '').trim().toLowerCase();
+  }
+
+  function catalogueHasPrestation(nom) {
+    var normalized = normalizePrestaName(nom);
+    var exists = false;
+    CATALOGUE.forEach(function(c) {
+      (c.items || []).forEach(function(item) {
+        if (normalizePrestaName(item.nom) === normalized) exists = true;
+      });
+    });
+    return exists;
+  }
+
+  function addPrestationToCatalogue(item, catName) {
+    var target = CATALOGUE.find(function(c) { return c.cat === catName; }) || CATALOGUE[0];
+    if (!target.items) target.items = [];
+    if (!catalogueHasPrestation(item.nom)) {
+      target.items.push({
+        nom: String(item.nom || '').trim(),
+        desc: item.desc || '',
+        public: Number(item.public || item.prix || 0),
+        acompte: Number(item.acompte || 0),
+        custom: true
+      });
+    }
+  }
+
+  function loadCustomPrestations() {
+    try {
+      var list = JSON.parse(localStorage.getItem(CUSTOM_PRESTATIONS_KEY) || '[]');
+      if (!Array.isArray(list)) return;
+      list.forEach(function(p) { if (p && p.nom) addPrestationToCatalogue(p, p.cat); });
+    } catch(e) {}
+  }
+
+  function persistCustomPrestation(item, catName) {
+    try {
+      var list = JSON.parse(localStorage.getItem(CUSTOM_PRESTATIONS_KEY) || '[]');
+      if (!Array.isArray(list)) list = [];
+      var normalized = normalizePrestaName(item.nom);
+      var saved = {
+        nom: String(item.nom || '').trim(),
+        cat: catName || CATALOGUE[0].cat,
+        desc: item.desc || '',
+        public: Number(item.public || item.prix || 0),
+        acompte: Number(item.acompte || 0),
+        custom: true
+      };
+      var idx = list.findIndex(function(p) { return normalizePrestaName(p.nom) === normalized; });
+      if (idx > -1) list[idx] = saved; else list.push(saved);
+      localStorage.setItem(CUSTOM_PRESTATIONS_KEY, JSON.stringify(list));
+    } catch(e) {}
+  }
+
+  loadCustomPrestations();
+
 
 
   // ═══ SYNC PRIX AVEC SITE PRINCIPAL ════════════════════════════════
@@ -3949,23 +3976,23 @@ FORMAT DE RÉPONSE :
 
     // Vérifier que la prestation n'existe pas déjà
     var exists = false;
-    CATALOGUE.forEach(function(c) {
-      c.items.forEach(function(item) { if (item.nom.toLowerCase() === nom.toLowerCase()) exists = true; });
-    });
+    exists = catalogueHasPrestation(nom);
     if (exists) { notif('Cette prestation existe déjà'); return; }
 
     // Ajouter dans la catégorie choisie
     var added = false;
     CATALOGUE.forEach(function(c) {
       if (c.cat === cat && !added) {
-        c.items.push({ nom: nom, desc: '', public: prix, acompte: isNaN(acompte) ? 0 : acompte });
+        c.items.push({ nom: nom, desc: '', public: prix, acompte: isNaN(acompte) ? 0 : acompte, custom: true });
+        persistCustomPrestation({ nom: nom, desc: '', public: prix, acompte: isNaN(acompte) ? 0 : acompte }, cat);
         added = true;
       }
     });
 
     if (!added) {
       // Catégorie non trouvée — ajouter dans la première
-      CATALOGUE[0].items.push({ nom: nom, desc: '', public: prix, acompte: isNaN(acompte) ? 0 : acompte });
+      CATALOGUE[0].items.push({ nom: nom, desc: '', public: prix, acompte: isNaN(acompte) ? 0 : acompte, custom: true });
+      persistCustomPrestation({ nom: nom, desc: '', public: prix, acompte: isNaN(acompte) ? 0 : acompte }, CATALOGUE[0].cat);
     }
 
     // Sauvegarder et rafraîchir
@@ -5396,16 +5423,16 @@ FORMAT DE RÉPONSE :
       return;
     }
     // Vérifier doublon
-    var existe = false;
-    CATALOGUE.forEach(function(c){ c.items.forEach(function(i){ if(i.nom.toLowerCase()===nom.toLowerCase()) existe=true; }); });
+    var existe = catalogueHasPrestation(nom);
     if (existe) { notif('Cette prestation existe déjà dans votre catalogue'); return; }
     // Ajouter dans la bonne catégorie
     var added = false;
-    CATALOGUE.forEach(function(c){ if(c.cat===cat && !added){ c.items.push({nom:nom.trim(),desc:'',public:prix,acompte:prix>=100?30:20}); added=true; } });
-    if (!added) CATALOGUE[0].items.push({nom:nom.trim(),desc:'',public:prix,acompte:prix>=100?30:20});
+    CATALOGUE.forEach(function(c){ if(c.cat===cat && !added){ c.items.push({nom:nom.trim(),desc:'',public:prix,acompte:prix>=100?30:20,custom:true}); persistCustomPrestation({nom:nom.trim(),desc:'',public:prix,acompte:prix>=100?30:20}, cat); added=true; } });
+    if (!added) { CATALOGUE[0].items.push({nom:nom.trim(),desc:'',public:prix,acompte:prix>=100?30:20,custom:true}); persistCustomPrestation({nom:nom.trim(),desc:'',public:prix,acompte:prix>=100?30:20}, CATALOGUE[0].cat); }
     window._expertPrices = window._expertPrices || {};
     window._expertPrices[nom.trim()] = prix;
     try { localStorage.setItem('mannyela_expert_prices', JSON.stringify(window._expertPrices)); } catch(e) {}
+    try { if (typeof syncExpertePublique === 'function') syncExpertePublique(); } catch(e) {}
     notif('Prestation "' + nom.trim() + '" ajoutée ✦');
     renderTab('parametres');
   }
@@ -6457,7 +6484,7 @@ FORMAT DE RÉPONSE :
       var rdv = { cliente_email: email, cliente_nom: nom, experte_email: (expert && expert.email) || '', experte_nom: (expert && expert.name) || '', date: date, heure: heure, prestation: presta, prix: prix, statut: 'confirmé', source: 'experte' };
       try {
         var c = window._supabaseClient || window.supabase;
-        if (c && c.from) { var r = await c.from('rendez_vous').insert(rdv).select(); if (r.error) { if (typeof notif === 'function') notif('Erreur cloud : ' + r.error.message); } }
+        if (c && c.from) { var r = await c.from('rendez_vous').insert(rdv).select(); if (r.error) { if (typeof notif === 'function') notif('Erreur cloud : ' + r.error.message); } else { try { fetch('https://project--dd57e8ac-8f9f-48dc-abbe-9736b3dd5e7c.lovable.app/api/public/send-rdv-email', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(rdv) }).then(function(rr){ if(!rr.ok){ rr.text().then(function(t){ console.warn('[email] ', rr.status, t); }); } }).catch(function(e){ console.warn('[email] network', e); }); } catch(e){} } }
       } catch (e) { if (typeof notif === 'function') notif('Erreur réseau'); }
       if (!state.rdvs) state.rdvs = [];
       state.rdvs.unshift({ id: Date.now(), cliente: nom, clienteEmail: email, date: date, heure: heure, prestation: presta, prix: prix, statut: 'confirmé' });
@@ -6715,10 +6742,12 @@ FORMAT DE RÉPONSE :
 
   // ── 3) RITUELS ───────────────────────────────────────────────────────
   // Hook générique : dès qu'un rituel est poussé dans state.rituelsEnvoyees, on synchronise.
-  async function pushRituelToFiche(clienteName, rit) {
+  async function pushRituelToFiche(clienteName, rit, clienteEmail) {
     var c = client(); if (!c) return;
     try {
-      var f = await c.from('client_fiches').select('id,email,name,rituels').eq('name', clienteName).maybeSingle();
+      var f = null;
+      if (clienteEmail) f = await c.from('client_fiches').select('id,email,name,rituels').eq('email', String(clienteEmail).trim().toLowerCase()).maybeSingle();
+      if (!f || !f.data) f = await c.from('client_fiches').select('id,email,name,rituels').eq('name', clienteName).maybeSingle();
       if (!f || !f.data) {
         var all = await c.from('client_fiches').select('id,email,name,rituels');
         if (all && all.data) {
@@ -6745,7 +6774,7 @@ FORMAT DE RÉPONSE :
       if (state.rituelsEnvoyees.length > _lastRituelCount) {
         var news = state.rituelsEnvoyees.slice(0, state.rituelsEnvoyees.length - _lastRituelCount);
         _lastRituelCount = state.rituelsEnvoyees.length;
-        news.forEach(function (r) { if (r && r.cliente) pushRituelToFiche(r.cliente, r); });
+        news.forEach(function (r) { if (r && r.cliente) pushRituelToFiche(r.cliente, r, r.clienteEmail); });
       } else {
         _lastRituelCount = state.rituelsEnvoyees.length;
       }
@@ -6921,31 +6950,82 @@ FORMAT DE RÉPONSE :
 <!-- ═══ END MESSAGING REDESIGN v2 ═══ -->
 
 
-<!-- ═══ MANNYELA EXPERTE FIXES v1 (logout + portfolio) ═══ -->
-<script data-mannyela-fixes="v1">
+<!-- ═══ MANNYELA EXPERTE FIXES v2 (logout + prestations sync + portfolio) ═══ -->
+<script data-mannyela-fixes="v2">
 (function(){
-  // 1) Robust logout: also sign out of Supabase so sync stops using stale session
-  var _origLogout = window.logout;
-  window.logout = async function(){
+  // 1) Robust public profile sync. Earlier builds placed this inside a script[src], so it may not execute.
+  window.syncExpertePublique = function() {
+    if (typeof expert === 'undefined' || !expert || !expert.actif) return;
     try {
+      if (typeof loadCustomPrestations === 'function') loadCustomPrestations();
+      var stored = JSON.parse(localStorage.getItem('mannyela_expertes_publiques') || '[]');
+      var isMannyela = typeof isExperteMannyela === 'function' ? isExperteMannyela(expert) : (expert.badge === 'mannyela' || expert.plan === 'mannyela' || expert.niveau === 'Admin');
+      var prices = {};
+      try { prices = JSON.parse(localStorage.getItem('mannyela_expert_prices') || '{}'); } catch(e) {}
+      var prestasPubliques = [];
+      if (typeof CATALOGUE !== 'undefined') {
+        CATALOGUE.forEach(function(cat) {
+          (cat.items || []).forEach(function(item) {
+            var price = prices[item.nom] !== undefined ? Number(prices[item.nom]) : Number(item.public || 0);
+            if (!item.supplement && price > 0) {
+              prestasPubliques.push({ nom: item.nom, prix: price, cat: cat.cat, custom: item.custom === true });
+            }
+          });
+        });
+      }
+      var profil = {
+        id: expert.email, email: expert.email, name: expert.name, nom: expert.name,
+        ville: expert.ville || '', adresse: expert.adresse || '', specialite: expert.specialite || '', bio: expert.bio || '',
+        avatar: expert.avatarUrl || expert.avatar || '',
+        niveau: isMannyela ? 'Experte Mannyela ✦' : 'Experte Réseau',
+        isRef: isMannyela, badge: expert.badge || 'reseau',
+        prestations: prestasPubliques.slice(0, 60),
+        portfolio: (typeof state !== 'undefined' && state.portfolio ? state.portfolio.filter(function(p){ return p.visible !== false; }) : []),
+        updatedAt: new Date().toISOString()
+      };
+      var idx = stored.findIndex(function(e) { return e.email === expert.email; });
+      if (idx > -1) stored[idx] = profil; else stored.push(profil);
+      localStorage.setItem('mannyela_expertes_publiques', JSON.stringify(stored));
+
       var c = window._supabaseClient || window.supabase;
-      if (c && c.auth && c.auth.signOut) { try { await c.auth.signOut(); } catch(e){ console.warn('signOut', e); } }
-    } catch(e){}
-    try { if (typeof _origLogout === 'function') return _origLogout.apply(this, arguments); }
-    catch(e){ console.warn('logout orig', e); }
-    // Fallback if original missing
+      if (c && c.from) {
+        c.from('experts').upsert({
+          email: expert.email, name: expert.name, ville: profil.ville, specialite: profil.specialite,
+          bio: profil.bio, niveau: profil.niveau, is_ref: profil.isRef, prestations: profil.prestations,
+          photo: profil.avatar || null, actif: true,
+          dispos: (typeof state !== 'undefined' && state.dispos) ? state.dispos : {},
+          updated_at: new Date().toISOString()
+        }).then(function(res){ if (res && res.error) console.warn('experts cloud:', res.error.message); });
+      }
+    } catch(e) { console.warn('syncExpertePublique:', e); }
+  };
+
+  // 2) Robust logout: update UI immediately, then sign out of Supabase in the background.
+  var _origLogout = window.logout;
+  window.logout = function(){
     try {
       if (typeof expert !== 'undefined') expert = null;
+      if (typeof expertState !== 'undefined') {
+        expertState.isLoggedIn = false;
+        expertState.email = null;
+        expertState.loginMethod = null;
+      }
       var dash = document.getElementById('dashboard');
       var ls   = document.getElementById('login-screen');
-      if (dash) dash.style.display = 'none';
+      if (dash) { dash.style.opacity = '1'; dash.style.display = 'none'; }
       if (ls)   ls.style.display = 'flex';
       var e1 = document.getElementById('login-email'); if (e1) e1.value = '';
       var e2 = document.getElementById('login-password'); if (e2) e2.value = '';
-    } catch(e){ console.warn('logout fallback', e); }
+      ['rdv-modal','routine-link-modal','exp-profile-overlay'].forEach(function(id){ var el = document.getElementById(id); if (el) el.remove(); });
+      if (typeof notif === 'function') notif('Déconnectée ✦');
+    } catch(e){}
+    try {
+      var c = window._supabaseClient || window.supabase;
+      if (c && c.auth && c.auth.signOut) c.auth.signOut().catch(function(e){ console.warn('signOut', e); });
+    } catch(e){}
   };
 
-  // 2) Missing handler: Ajouter une photo (portfolio)
+  // 3) Missing handler: Ajouter une photo (portfolio)
   if (typeof window.addPortfolioPhoto !== 'function') {
     window.addPortfolioPhoto = function(){
       var inp = document.createElement('input');
@@ -6962,6 +7042,25 @@ FORMAT DE RÉPONSE :
   }
 })();
 </script>
+
+<!-- Auto-sync disponibilités experte → cloud (pour affichage côté cliente) -->
+<script>
+(function(){
+  var lastHash = '';
+  function hash(o){ try { return JSON.stringify(o||{}); } catch(_) { return ''; } }
+  setInterval(function(){
+    try {
+      if (typeof state === 'undefined' || !state.dispos) return;
+      if (typeof expert === 'undefined' || !expert || !expert.email) return;
+      var h = hash(state.dispos);
+      if (h === lastHash) return;
+      lastHash = h;
+      if (typeof syncExpertePublique === 'function') syncExpertePublique();
+    } catch(e) { console.warn('auto-sync dispos', e); }
+  }, 4000);
+})();
+</script>
+
 <!-- ═══ END EXPERTE FIXES v1 ═══ -->
 
 </body>
