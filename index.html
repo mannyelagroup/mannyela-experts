@@ -1627,7 +1627,7 @@
       <!-- SAVE BAR -->
       <div style="position:sticky;bottom:0;background:rgba(0,30,33,0.95);backdrop-filter:blur(10px);padding:0.75rem 0;border-top:1px solid rgba(245,245,220,0.06);display:flex;justify-content:space-between;align-items:center;">
         <p style="font-size:9px;color:rgba(245,245,220,0.25);font-family:'Cinzel',serif;">Vos disponibilités sont visibles par vos clientes dès enregistrement</p>
-        <button onclick="notif('Disponibilités synchronisées ✦')" class="btn-gold" style="font-size:8px;">Enregistrer ✦</button>
+        <button onclick="try{if(typeof syncExpertePublique==='function')syncExpertePublique();}catch(e){} notif('Disponibilités synchronisées ✦')" class="btn-gold" style="font-size:8px;">Enregistrer ✦</button>
       </div>
     `;
   }
@@ -1638,6 +1638,7 @@
     if (idx > -1) state.dispos[day].splice(idx, 1);
     else state.dispos[day].push(slot);
     state.dispos[day].sort();
+    try { if (typeof syncExpertePublique === 'function') syncExpertePublique(); } catch(e) {}
     renderTab('dispos');
   }
 
@@ -1646,6 +1647,7 @@
     const end   = disposState.customEnd;
     const slots = on ? ALL_SLOTS.filter(s => s >= start && s <= end) : [];
     state.dispos[day] = slots;
+    try { if (typeof syncExpertePublique === 'function') syncExpertePublique(); } catch(e) {}
     renderTab('dispos');
   }
 
@@ -1683,6 +1685,7 @@
       }
     }
     notif('Modèle récurrent appliqué sur 8 semaines ✦');
+    try { if (typeof syncExpertePublique === 'function') syncExpertePublique(); } catch(e) {}
     disposState.view = 'calendrier';
     renderTab('dispos');
   }
