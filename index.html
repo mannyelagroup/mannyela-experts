@@ -591,6 +591,7 @@
     <button data-tab="clientes" onclick="showTab('clientes')"><i data-lucide="users"></i>Clientes</button>
     <button data-tab="communaute" onclick="showTab('communaute')"><i data-lucide="message-circle"></i>Commu.</button>
     <button onclick="var s=document.querySelector('.sidebar'),o=document.getElementById('mobile-menu-overlay');s.classList.add('open');o.classList.add('open');"><i data-lucide="menu"></i>Plus</button>
+    <button onclick="logout()"><i data-lucide="log-out"></i>Sortir</button>
   </nav>
 
   <!-- SIDEBAR -->
@@ -6487,7 +6488,7 @@ FORMAT DE RÉPONSE :
       var rdv = { cliente_email: email, cliente_nom: nom, experte_email: (expert && expert.email) || '', experte_nom: (expert && expert.name) || '', date: date, heure: heure, prestation: presta, prix: prix, statut: 'confirmé', source: 'experte' };
       try {
         var c = window._supabaseClient || window.supabase;
-        if (c && c.from) { var r = await c.from('rendez_vous').insert(rdv).select(); if (r.error) { if (typeof notif === 'function') notif('Erreur cloud : ' + r.error.message); } else { try { fetch('https://project--dd57e8ac-8f9f-48dc-abbe-9736b3dd5e7c.lovable.app/api/public/send-rdv-email', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(rdv) }).then(function(rr){ if(!rr.ok){ rr.text().then(function(t){ console.warn('[email] ', rr.status, t); }); } }).catch(function(e){ console.warn('[email] network', e); }); } catch(e){} } }
+        if (c && c.from) { var r = await c.from('rendez_vous').insert(rdv).select(); if (r.error) { if (typeof notif === 'function') notif('Erreur cloud : ' + r.error.message); } else { try { fetch('https://project--dd57e8ac-8f9f-48dc-abbe-9736b3dd5e7c-dev.lovable.app/api/public/send-rdv-email', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(rdv) }).then(function(rr){ if(!rr.ok){ rr.text().then(function(t){ console.warn('[email] ', rr.status, t); }); } }).catch(function(e){ console.warn('[email] network', e); }); } catch(e){} } }
       } catch (e) { if (typeof notif === 'function') notif('Erreur réseau'); }
       if (!state.rdvs) state.rdvs = [];
       state.rdvs.unshift({ id: Date.now(), cliente: nom, clienteEmail: email, date: date, heure: heure, prestation: presta, prix: prix, statut: 'confirmé' });
@@ -6984,6 +6985,8 @@ FORMAT DE RÉPONSE :
         isRef: isMannyela, badge: expert.badge || 'reseau',
         prestations: prestasPubliques.slice(0, 60),
         portfolio: (typeof state !== 'undefined' && state.portfolio ? state.portfolio.filter(function(p){ return p.visible !== false; }) : []),
+        dispos: (typeof state !== 'undefined' && state.dispos) ? state.dispos : {},
+        disponibilites: (typeof state !== 'undefined' && state.dispos) ? state.dispos : {},
         updatedAt: new Date().toISOString()
       };
       var idx = stored.findIndex(function(e) { return e.email === expert.email; });
@@ -6992,13 +6995,19 @@ FORMAT DE RÉPONSE :
 
       var c = window._supabaseClient || window.supabase;
       if (c && c.from) {
-        c.from('experts').upsert({
+        var expertPayload = {
           email: expert.email, name: expert.name, ville: profil.ville, specialite: profil.specialite,
           bio: profil.bio, niveau: profil.niveau, is_ref: profil.isRef, prestations: profil.prestations,
           photo: profil.avatar || null, actif: true,
           dispos: (typeof state !== 'undefined' && state.dispos) ? state.dispos : {},
+          disponibilites: (typeof state !== 'undefined' && state.dispos) ? state.dispos : {},
           updated_at: new Date().toISOString()
-        }).then(function(res){ if (res && res.error) console.warn('experts cloud:', res.error.message); });
+        };
+        c.from('experts').update(expertPayload).eq('email', expert.email).select('email').then(function(res){
+          if (res && res.error) { console.warn('experts cloud update:', res.error.message); return; }
+          if (res && res.data && res.data.length) return;
+          c.from('experts').insert(expertPayload).then(function(ins){ if (ins && ins.error) console.warn('experts cloud insert:', ins.error.message); });
+        });
       }
     } catch(e) { console.warn('syncExpertePublique:', e); }
   };
