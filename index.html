@@ -7075,5 +7075,115 @@ FORMAT DE RÉPONSE :
 
 <!-- ═══ END EXPERTE FIXES v1 ═══ -->
 
+<!-- ═══ MANNYELA EXPERTE — CR + RITUELS SYNC v3 (2026) ═══ -->
+<script data-mannyela-sync-v3="1">
+/*
+  Push comptes-rendus & rituels dans les tables dédiées :
+    - expert_rapports  (Suivi Capillaire)
+    - expert_rituels
+  Ces tables sont indépendantes de client_fiches → fonctionne même si la
+  cliente ne s'est jamais connectée. Lookup par email (insensible à la casse).
+*/
+(function(){
+  function c(){ return window._supabaseClient || window.supabase || null; }
+  function log(m,e){ try{console.warn('[SyncV3] '+m, e && (e.message||e));}catch(_){}}
+  function findClienteEmail(nom){
+    try{
+      if (typeof state==='undefined' || !Array.isArray(state.clientes)) return '';
+      var cli = state.clientes.find(function(x){ return (x.nom||'').toLowerCase() === (nom||'').toLowerCase(); });
+      return cli && cli.email ? String(cli.email).trim().toLowerCase() : '';
+    }catch(_){return '';}
+  }
+  function expertInfo(){
+    try{
+      var e = (typeof expert!=='undefined' && expert) || {};
+      return { email: (e.email||'').toLowerCase(), nom: e.name || e.email || 'Experte Mannyela' };
+    }catch(_){ return { email:'', nom:'Experte Mannyela' }; }
+  }
+
+  // ── COMPTES-RENDUS ────────────────────────────────────────────────
+  async function pushRapport(clienteName, cr){
+    var cli = c(); if(!cli) return;
+    var email = findClienteEmail(clienteName);
+    if (!email){ log('CR: pas d\'email pour ' + clienteName + ' — impossible de synchroniser'); return; }
+    var ei = expertInfo();
+    var payload = {
+      expert: cr.expert || ei.nom,
+      date:   cr.date || new Date().toISOString(),
+      type:   cr.type || 'Séance',
+      diagnostic:      cr.diagnostic || cr.diagnosis || '',
+      soins:           cr.soins || cr.treatments || '',
+      recommendations: cr.recommendations || cr.recommandations || '',
+      nextVisit:       cr.nextVisit || cr.next || '',
+      urgency:         cr.urgency || cr.urgence || 'ok',
+      photo_avant:     cr.photo_avant || null,
+      photo_apres:     cr.photo_apres || null
+    };
+    try{
+      var r = await cli.from('expert_rapports').insert({
+        cliente_email: email, cliente_nom: clienteName,
+        expert_email: ei.email, expert_nom: ei.nom, payload: payload
+      });
+      if (r && r.error) log('insert rapport', r.error); else log('CR envoyé à ' + email + ' ✦');
+    }catch(e){ log('pushRapport', e); }
+  }
+
+  // Wrap envoyerCR : on capture les valeurs AVANT que le formulaire ne soit remis à zéro.
+  var _origCR = window.envoyerCR;
+  window.envoyerCR = function(){
+    var cliente    = document.getElementById('cr-cliente')?.value || '';
+    var diagnostic = (document.getElementById('cr-diagnostic')?.value || '').trim();
+    var type       = document.getElementById('cr-type')?.value || 'Séance';
+    var soins      = (document.getElementById('cr-soins')?.value || '').trim();
+    var reco       = (document.getElementById('cr-reco')?.value || '').trim();
+    var urgence    = document.getElementById('cr-urgence')?.value || 'ok';
+    var nextVisit  = (document.getElementById('cr-next')?.value || '').trim();
+    var photoAv = (state && state.newCR && state.newCR.photo_avant) || null;
+    var photoAp = (state && state.newCR && state.newCR.photo_apres) || null;
+    var ret;
+    try { ret = _origCR && _origCR.apply(this, arguments); } catch(e){ log('orig envoyerCR', e); }
+    if (cliente && diagnostic) {
+      pushRapport(cliente, {
+        date: new Date().toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' }),
+        type: type, diagnostic: diagnostic, soins: soins, recommendations: reco,
+        nextVisit: nextVisit, urgency: urgence, photo_avant: photoAv, photo_apres: photoAp
+      });
+      try { if (typeof notif==='function') notif('✦ Envoyé à la cliente'); } catch(_){}
+    }
+    return ret;
+  };
+
+  // ── RITUELS ───────────────────────────────────────────────────────
+  async function pushRituelV3(clienteName, routine){
+    var cli = c(); if(!cli) return;
+    var email = findClienteEmail(clienteName);
+    if (!email){ log('Rituel: pas d\'email pour ' + clienteName); return; }
+    var ei = expertInfo();
+    try{
+      var r = await cli.from('expert_rituels').insert({
+        cliente_email: email, cliente_nom: clienteName,
+        expert_email: ei.email, expert_nom: ei.nom, payload: routine
+      });
+      if (r && r.error) log('insert rituel', r.error); else log('Rituel envoyé à ' + email + ' ✦');
+    }catch(e){ log('pushRituelV3', e); }
+  }
+
+  // Wrap envoyerRoutine
+  var _origRoutine = window.envoyerRoutine;
+  window.envoyerRoutine = function(){
+    var ret;
+    try { ret = _origRoutine && _origRoutine.apply(this, arguments); } catch(e){ log('orig envoyerRoutine', e); }
+    try{
+      var last = (state && Array.isArray(state.rituelsEnvoyees) && state.rituelsEnvoyees.length)
+        ? state.rituelsEnvoyees[state.rituelsEnvoyees.length - 1] : null;
+      if (last && last.cliente && last.routine) pushRituelV3(last.cliente, last.routine);
+    }catch(e){ log('wrap envoyerRoutine', e); }
+    return ret;
+  };
+
+  console.log('[MannyelaSyncV3] Experte → tables dédiées actif ✦');
+})();
+</script>
+
 </body>
 </html>
