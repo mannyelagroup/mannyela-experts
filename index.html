@@ -1964,8 +1964,21 @@
   }
 
   function renderFicheClienteComplete(idx_c) {
-    const c = state.clientes[idx_c];
-    if (!c) return '<p style="color:rgba(245,245,220,0.3);">Cliente introuvable</p>';
+    const c0 = state.clientes[idx_c];
+    if (!c0) return '<p style="color:rgba(245,245,220,0.3);">Cliente introuvable</p>';
+    // Fusionne la fiche locale avec le diagnostic rempli par la cliente sur le site principal
+    const _cf = c0._cloudFiche || (window._cloudFiches||[]).find(function(f){
+      return f.email && c0.email && f.email.toLowerCase() === String(c0.email).toLowerCase();
+    }) || {};
+    const c = Object.assign({}, c0, {
+      texture:  c0.texture  || _cf.texture  || '',
+      porosite: c0.porosite || _cf.porosite || '',
+      densite:  c0.densite  || _cf.densite  || '',
+      etat:     c0.etat     || _cf.etat     || '',
+      longueur: c0.longueur || _cf.longueur || '',
+      objectif: c0.objectif || _cf.objectif || '',
+      _cloudFiche: _cf.email ? _cf : c0._cloudFiche
+    });
 
     const rdvsC = state.rdvs.filter(r => r.cliente === c.nom).sort((a,b)=>b.date.localeCompare(a.date));
     const crsC  = state.compteRendus.filter(r => r.cliente === c.nom).sort((a,b)=>b.date.localeCompare(a.date));
@@ -7089,6 +7102,7 @@ FORMAT DE RÉPONSE :
   function log(m,e){ try{console.warn('[SyncV3] '+m, e && (e.message||e));}catch(_){}}
   function findClienteEmail(nom){
     try{
+      if (window.mannyelaResolveEmail) return window.mannyelaResolveEmail(nom);
       if (typeof state==='undefined' || !Array.isArray(state.clientes)) return '';
       var cli = state.clientes.find(function(x){ return (x.nom||'').toLowerCase() === (nom||'').toLowerCase(); });
       return cli && cli.email ? String(cli.email).trim().toLowerCase() : '';
@@ -7182,6 +7196,107 @@ FORMAT DE RÉPONSE :
   };
 
   console.log('[MannyelaSyncV3] Experte → tables dédiées actif ✦');
+})();
+</script>
+
+
+<!-- ═══ MANNYELA EXPERTE — FIX v4 : clientes cloud, rituels, fiche capillaire ═══ -->
+<script data-mannyela-expert-v4="1">
+(function(){
+  function c(){ return window._supabaseClient || window.supabase || null; }
+  function log(m,e){ try{ console.warn('[ExpertV4] '+m, e && (e.message||e)); }catch(_){} }
+  function norm(v){ return String(v||'').trim().toLowerCase(); }
+
+  // ── 1) RÉSOLUTION D'EMAIL ROBUSTE (nom → email cliente) ───────────────
+  window.mannyelaResolveEmail = function(nomOuEmail){
+    var q = norm(nomOuEmail);
+    if (!q) return '';
+    if (q.indexOf('@') > 0) return q;
+    var list = (typeof state!=='undefined' && Array.isArray(state.clientes)) ? state.clientes : [];
+    var hit = list.find(function(x){ return norm(x.nom) === q && x.email; });
+    if (hit) return norm(hit.email);
+    var fiches = window._cloudFiches || [];
+    hit = fiches.find(function(f){ return norm(f.name) === q && f.email; });
+    if (hit) return norm(hit.email);
+    // correspondance partielle (prénom seul, accents/espaces en trop)
+    hit = fiches.find(function(f){ return f.email && (norm(f.name).indexOf(q) === 0 || q.indexOf(norm(f.name)) === 0); });
+    if (hit) return norm(hit.email);
+    hit = list.find(function(x){ return x.email && norm(x.nom).indexOf(q) === 0; });
+    return hit ? norm(hit.email) : '';
+  };
+
+  // ── 2) CHARGEMENT DES CLIENTES DEPUIS LE CLOUD (au démarrage + toutes les 30 s)
+  var _sig = '';
+  async function loadFiches(force){
+    var cli = c(); if (!cli || !cli.from) return;
+    try{
+      var res = await cli.from('client_fiches').select('*').order('updated_at', { ascending:false });
+      if (res.error) { log('client_fiches', res.error); return; }
+      var rows = res.data || [];
+      window._cloudFiches = rows;
+      if (typeof state === 'undefined') return;
+      if (!Array.isArray(state.clientes)) state.clientes = [];
+      rows.forEach(function(f){
+        if (!f.email) return;
+        var ex = state.clientes.find(function(x){ return x.email && norm(x.email) === norm(f.email); });
+        if (!ex) {
+          ex = { nom: f.name || String(f.email).split('@')[0], email: f.email, nbSessions: 0, source: 'plateforme' };
+          state.clientes.push(ex);
+        }
+        ex._cloudFiche = f;
+        ['texture','porosite','densite','objectif','etat','longueur'].forEach(function(k){
+          if (!ex[k] && f[k]) ex[k] = f[k];
+        });
+      });
+      var sig = state.clientes.length + '|' + rows.map(function(f){ return f.email + (f.updated_at||''); }).join(',');
+      if (sig !== _sig || force) {
+        _sig = sig;
+        try {
+          if (typeof currentTab !== 'undefined' && typeof renderTab === 'function' &&
+              ['clientes','routine','compteRendus','messages','elya'].indexOf(currentTab) >= 0) renderTab(currentTab);
+        } catch(_){}
+      }
+    }catch(e){ log('loadFiches', e); }
+  }
+  window.mannyelaLoadFiches = loadFiches;
+  setTimeout(function(){ loadFiches(true); }, 1200);
+  setInterval(function(){ loadFiches(false); }, 30000);
+
+  // ── 3) RITUELS : sélectionner automatiquement une cliente ─────────────
+  function autoSelectCliente(){
+    try{
+      if (typeof routineBuilder === 'undefined' || typeof state === 'undefined') return;
+      if (!Array.isArray(state.clientes) || state.clientes.length === 0) return;
+      var i = routineBuilder.clienteIdx;
+      if (i === null || i === undefined || !state.clientes[i]) routineBuilder.clienteIdx = 0;
+    }catch(_){}
+  }
+  ['showTab','renderTab'].forEach(function(fn){
+    var orig = window[fn];
+    if (typeof orig !== 'function') return;
+    window[fn] = function(tab){
+      if (tab === 'routine') { autoSelectCliente(); if (!window._cloudFiches) loadFiches(true); }
+      if (tab === 'clientes' && !window._cloudFiches) loadFiches(true);
+      return orig.apply(this, arguments);
+    };
+  });
+
+  // ── 4) COMPTE-RENDU : prévenir l'experte si l'email cliente manque ────
+  var _cr = window.envoyerCR;
+  if (typeof _cr === 'function') {
+    window.envoyerCR = function(){
+      var nom = (document.getElementById('cr-cliente')||{}).value || '';
+      var ret = _cr.apply(this, arguments);
+      setTimeout(function(){
+        if (nom && !window.mannyelaResolveEmail(nom)) {
+          try { notif('⚠ Aucune adresse e-mail pour ' + nom + " — ajoutez-la dans sa fiche pour qu'elle reçoive le compte-rendu"); } catch(_){}
+        }
+      }, 300);
+      return ret;
+    };
+  }
+
+  console.log('[ExpertV4] Clientes cloud + rituels + fiche capillaire ✦');
 })();
 </script>
 
