@@ -7300,5 +7300,323 @@ FORMAT DE RÉPONSE :
 })();
 </script>
 
+
+<!-- ═══ MANNYELA EXPERTE — FIX v5 : paywall strict, rituels, suppression comptes ═══ -->
+<script data-mannyela-expert-v5="1">
+(function(){
+  function sb(){ return window._supabaseClient || window.supabase || null; }
+  function log(m,e){ try{ console.warn('[ExpertV5] '+m, e && (e.message||e)); }catch(_){} }
+  function norm(v){ return String(v||'').trim().toLowerCase(); }
+  function toast(m){ try{ if (typeof notif === 'function') notif(m); }catch(_){} }
+  function me(){ try{ return (typeof expert !== 'undefined') ? expert : null; }catch(_){ return null; } }
+
+  var FONDATRICE = 'rachelle@mannyelagroup.com';
+  var LS_PAID    = 'mannyela_paiements_ok';
+  var LS_DELETED = 'mannyela_comptes_supprimes';
+  function lsGet(k){ try{ return JSON.parse(localStorage.getItem(k) || '[]'); }catch(_){ return []; } }
+  function lsAdd(k,v){ var a = lsGet(k); if (a.indexOf(v) === -1) a.push(v); try{ localStorage.setItem(k, JSON.stringify(a)); }catch(_){} }
+  function lsDel(k,v){ try{ localStorage.setItem(k, JSON.stringify(lsGet(k).filter(function(x){ return x !== v; }))); }catch(_){} }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 1) PAYWALL STRICT — aucun service sans paiement
+  // ══════════════════════════════════════════════════════════════════
+  var FREE_TABS = ['accueil', 'parametres', 'admin', 'admin-prix'];
+
+  window.mannyelaIsPaid = function(acc){
+    acc = acc || me();
+    if (!acc) return false;
+    if (acc.isAdmin === true || acc.niveau === 'Admin' || norm(acc.email) === FONDATRICE) return true;
+    if (acc.exonere === true) return true;
+    if (acc.paiement_ok === true || acc.paiementOk === true) return true;
+    return lsGet(LS_PAID).indexOf(norm(acc.email)) > -1;
+  };
+
+  function planLinks(){
+    var L = window.EXPERTE_PAYMENT_LINKS || {};
+    var acc = me() || {};
+    var isMannyela = acc.badge === 'mannyela' || acc.plan === 'mannyela' || /Mannyela/i.test(acc.niveau || '');
+    var out = '';
+    if (isMannyela && L.mannyela) {
+      out += btn(L.mannyela, 'Activer mon abonnement — 39,90 €/mois');
+    } else if (L.reseau) {
+      out += btn(L.reseau, 'Activer mon abonnement — 49,90 €/mois');
+    }
+    return out;
+    function btn(href, label){
+      return '<a href="' + href + '" target="_blank" rel="noopener" '
+        + 'style="display:inline-block;font-family:Cinzel,serif;font-size:9px;letter-spacing:0.2em;text-transform:uppercase;'
+        + 'padding:0.8rem 1.6rem;margin:0.35rem;border:1px solid rgba(196,149,106,0.6);color:rgba(196,149,106,0.95);'
+        + 'background:rgba(196,149,106,0.07);text-decoration:none;">' + label + '</a>';
+    }
+  }
+
+  function lockHtml(tab){
+    var labels = {
+      elya: 'ELYA Pro', diagnostic: 'Diagnostic IA', 'diagnostic-ia': 'Diagnostic IA',
+      dispos: 'Mes disponibilités', rdv: 'Mes rendez-vous', clientes: 'Mes clientes',
+      messages: 'Messagerie', compteRendus: 'Comptes-rendus', routine: 'Rituels',
+      portfolio: 'Portfolio', revenus: 'Revenus', catalogue: 'Catalogue', communaute: 'Communauté'
+    };
+    var titre = labels[tab] || 'Cette fonctionnalité';
+    return '<div style="text-align:center;padding:3.5rem 1.25rem;max-width:520px;margin:0 auto;">'
+      + '<p style="font-size:2.2rem;margin-bottom:1rem;opacity:0.35;">🔒</p>'
+      + '<p class="font-cinzel" style="font-size:11px;letter-spacing:0.3em;color:rgba(196,149,106,0.8);text-transform:uppercase;margin-bottom:0.85rem;">Abonnement requis</p>'
+      + '<h2 class="font-cinzel" style="font-size:1.25rem;color:rgba(245,245,220,0.85);margin-bottom:0.75rem;">' + titre + '</h2>'
+      + '<p style="font-size:10px;color:rgba(245,245,220,0.4);line-height:1.9;margin-bottom:1.5rem;">'
+      + 'Votre abonnement Mannyela n\'est pas encore actif.<br/>'
+      + 'Les consultations ELYA, les disponibilités, les rendez-vous et l\'ensemble des services sont accessibles dès la validation de votre paiement.</p>'
+      + planLinks()
+      + '<p style="font-size:9px;color:rgba(245,245,220,0.25);line-height:1.8;margin-top:1.25rem;">'
+      + 'Paiement déjà effectué ? Il est validé sous quelques minutes — écrivez à '
+      + '<span style="color:rgba(196,149,106,0.65);">rachelle@mannyelagroup.com</span> si l\'accès reste bloqué.</p>'
+      + '</div>';
+  }
+
+  function bannerHtml(){
+    return '<div style="border:1px solid rgba(196,149,106,0.3);background:rgba(196,149,106,0.05);padding:1rem 1.1rem;margin-bottom:1.5rem;">'
+      + '<p class="font-cinzel" style="font-size:9px;letter-spacing:0.25em;color:rgba(196,149,106,0.85);text-transform:uppercase;margin-bottom:0.4rem;">🔒 Abonnement inactif</p>'
+      + '<p style="font-size:10px;color:rgba(245,245,220,0.45);line-height:1.8;margin-bottom:0.75rem;">Vos services (ELYA, disponibilités, rendez-vous, clientes) sont bloqués tant que le paiement n\'est pas validé.</p>'
+      + planLinks() + '</div>';
+  }
+
+  function paint(html){
+    var el = document.getElementById('main-content');
+    if (el) { el.innerHTML = html; try{ if (typeof lucide !== 'undefined') lucide.createIcons(); }catch(_){} }
+  }
+
+  function blocked(tab){
+    return !!me() && FREE_TABS.indexOf(tab) === -1 && !window.mannyelaIsPaid();
+  }
+
+  var _showTab   = window.showTab;
+  var _renderTab = window.renderTab;
+
+  window.showTab = function(tab, el){
+    if (blocked(tab)) {
+      try{
+        document.querySelectorAll('.nav-item').forEach(function(b){ b.classList.remove('active'); });
+        if (el) el.classList.add('active');
+      }catch(_){}
+      paint(lockHtml(tab));
+      return;
+    }
+    var r = _showTab.apply(this, arguments);
+    afterRender(tab);
+    return r;
+  };
+
+  window.renderTab = function(tab){
+    if (blocked(tab)) { try{ currentTab = tab; }catch(_){} paint(lockHtml(tab)); return; }
+    var r = _renderTab.apply(this, arguments);
+    afterRender(tab);
+    return r;
+  };
+
+  function afterRender(tab){
+    setTimeout(function(){
+      try{
+        var el = document.getElementById('main-content');
+        if (!el) return;
+        if (tab === 'accueil' && me() && !window.mannyelaIsPaid()) el.insertAdjacentHTML('afterbegin', bannerHtml());
+        if (tab === 'admin') injectAdminPaiement(el);
+      }catch(e){ log('afterRender', e); }
+    }, 0);
+  }
+
+  // Statut de paiement depuis le cloud (colonnes paiement_ok / exonere)
+  async function loadStatut(){
+    var acc = me(); var c = sb();
+    if (!acc || !acc.email || !c || !c.from) return;
+    try{
+      var r = await c.from('profils_expertes').select('email,actif,exonere,paiement_ok').eq('email', norm(acc.email)).maybeSingle();
+      if (r && r.error) { log('statut paiement', r.error); return; }
+      if (r && r.data) {
+        acc.paiement_ok = r.data.paiement_ok === true;
+        acc.exonere     = r.data.exonere === true || acc.exonere === true;
+        if (typeof ACCOUNTS !== 'undefined' && ACCOUNTS[norm(acc.email)]) {
+          ACCOUNTS[norm(acc.email)].paiement_ok = acc.paiement_ok;
+          ACCOUNTS[norm(acc.email)].exonere     = acc.exonere;
+        }
+        if (acc.paiement_ok) lsAdd(LS_PAID, norm(acc.email)); else lsDel(LS_PAID, norm(acc.email));
+        if (!window.mannyelaIsPaid() && typeof currentTab !== 'undefined' && FREE_TABS.indexOf(currentTab) === -1) paint(lockHtml(currentTab));
+      }
+    }catch(e){ log('loadStatut', e); }
+  }
+  setInterval(loadStatut, 60000);
+  setTimeout(loadStatut, 2500);
+
+  // ══════════════════════════════════════════════════════════════════
+  // 2) ADMIN — valider un paiement / supprimer un compte (même admin)
+  // ══════════════════════════════════════════════════════════════════
+  window.mannyelaSetPaiement = async function(email, ok){
+    email = norm(email);
+    if (typeof ACCOUNTS !== 'undefined' && ACCOUNTS[email]) {
+      ACCOUNTS[email].paiement_ok = !!ok;
+      if (ok) ACCOUNTS[email].actif = true;
+    }
+    if (ok) lsAdd(LS_PAID, email); else lsDel(LS_PAID, email);
+    var c = sb();
+    if (c && c.from) {
+      try{
+        var r = await c.from('profils_expertes').update({ paiement_ok: !!ok, updated_at: new Date().toISOString() }).eq('email', email);
+        if (r && r.error) log('maj paiement', r.error);
+      }catch(e){ log('setPaiement', e); }
+    }
+    toast(ok ? email + ' — paiement validé ✦' : email + ' — paiement retiré');
+    try{ if (typeof adminState !== 'undefined') adminState.msg = { type:'ok', text: ok ? 'Paiement validé — accès complet ouvert.' : 'Paiement retiré — services bloqués.' }; }catch(_){}
+    try{ window.renderTab('admin'); }catch(_){}
+  };
+
+  function injectAdminPaiement(root){
+    try{
+      if (typeof adminState === 'undefined' || adminState.view !== 'fiche' || !adminState.selectedEmail) return;
+      var email = norm(adminState.selectedEmail);
+      if (document.getElementById('v5-paiement-card')) return;
+      var acc = (typeof ACCOUNTS !== 'undefined' && ACCOUNTS[email]) || {};
+      var paid = window.mannyelaIsPaid(Object.assign({}, acc, { email: email }));
+      var html = '<div id="v5-paiement-card" style="border:1px solid ' + (paid ? 'rgba(126,200,164,0.3)' : 'rgba(200,80,80,0.3)') + ';padding:1.1rem;margin-top:1.25rem;">'
+        + '<p class="font-cinzel" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;color:' + (paid ? 'rgba(126,200,164,0.85)' : 'rgba(200,110,110,0.85)') + ';margin-bottom:0.5rem;">'
+        + (paid ? '✓ Paiement validé — accès complet' : '🔒 Paiement non validé — services bloqués') + '</p>'
+        + '<p style="font-size:9px;color:rgba(245,245,220,0.3);line-height:1.7;margin-bottom:0.85rem;">Sans paiement validé (ou exonération), cette experte ne peut utiliser ni ELYA, ni les disponibilités, ni les rendez-vous.</p>'
+        + '<button onclick="mannyelaSetPaiement(\'' + email + '\',' + (paid ? 'false' : 'true') + ')" '
+        + 'style="font-family:Cinzel,serif;font-size:8px;letter-spacing:.2em;text-transform:uppercase;padding:.65rem;width:100%;cursor:pointer;'
+        + 'border:1px solid rgba(196,149,106,.4);color:rgba(196,149,106,.85);background:transparent;">'
+        + (paid ? 'Retirer la validation de paiement' : '💳 Valider le paiement') + '</button>'
+        + '<button onclick="if(confirm(\'Supprimer définitivement ce compte ?\')){supprimerCompte(\'' + email + '\')}" '
+        + 'style="font-family:Cinzel,serif;font-size:8px;letter-spacing:.2em;text-transform:uppercase;padding:.65rem;width:100%;margin-top:.5rem;cursor:pointer;'
+        + 'border:1px solid rgba(200,60,60,.35);color:rgba(200,70,70,.8);background:transparent;">🗑 Retirer / supprimer ce compte</button>'
+        + '</div>';
+      root.insertAdjacentHTML('beforeend', html);
+    }catch(e){ log('injectAdminPaiement', e); }
+  }
+
+  // Suppression réelle (locale + cloud) — fonctionne aussi pour les modérateurs/admins
+  window.supprimerCompte = async function(email){
+    email = norm(email);
+    var acc = (typeof ACCOUNTS !== 'undefined') ? ACCOUNTS[email] : null;
+    var moi = me();
+    if (!moi || moi.isAdmin !== true) { toast('Action réservée à l\'administratrice'); return; }
+    if (email === norm(moi.email) || email === FONDATRICE) { toast('Impossible de supprimer le compte fondatrice'); return; }
+    var nom = (acc && acc.name) || email;
+
+    try{ if (typeof ACCOUNTS !== 'undefined') delete ACCOUNTS[email]; }catch(_){}
+    lsAdd(LS_DELETED, email);
+    lsDel(LS_PAID, email);
+
+    var c = sb();
+    if (c && c.from) {
+      try{
+        var del = await c.from('profils_expertes').delete().eq('email', email);
+        if (del && del.error) {
+          log('delete profil', del.error);
+          var up = await c.from('profils_expertes').update({ actif: false, updated_at: new Date().toISOString() }).eq('email', email);
+          if (up && up.error) log('desactivation profil', up.error);
+        }
+      }catch(e){ log('supprimerCompte cloud', e); }
+      try{ await c.from('expertes_publiques').delete().eq('email', email); }catch(_){}
+    }
+    try{
+      var pub = JSON.parse(localStorage.getItem('mannyela_expertes_publiques') || '[]');
+      localStorage.setItem('mannyela_expertes_publiques', JSON.stringify(pub.filter(function(x){ return norm(x.email) !== email; })));
+    }catch(_){}
+
+    try{
+      if (typeof adminState !== 'undefined') {
+        adminState.view = 'liste';
+        adminState.selectedEmail = null;
+        adminState.msg = { type:'ok', text: 'Compte ' + nom + ' supprimé définitivement.' };
+      }
+    }catch(_){}
+    toast(nom + ' — compte supprimé');
+    try{ window.renderTab('admin'); }catch(_){}
+  };
+
+  // Ne jamais réafficher un compte supprimé lors du rechargement cloud
+  var _loadCand = window._loadExpCandidatures;
+  if (typeof _loadCand === 'function') {
+    window._loadExpCandidatures = async function(){
+      var r = await _loadCand.apply(this, arguments);
+      try{
+        lsGet(LS_DELETED).forEach(function(e){ if (typeof ACCOUNTS !== 'undefined') delete ACCOUNTS[e]; });
+        lsGet(LS_PAID).forEach(function(e){ if (typeof ACCOUNTS !== 'undefined' && ACCOUNTS[e]) ACCOUNTS[e].paiement_ok = true; });
+      }catch(_){}
+      return r;
+    };
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 3) RITUELS — envoi fiable (plus de crash presse-papier)
+  // ══════════════════════════════════════════════════════════════════
+  window.envoyerRoutine = async function(){
+    if (!window.mannyelaIsPaid()) { paint(lockHtml('routine')); return; }
+    if (typeof state === 'undefined' || typeof routineBuilder === 'undefined') return;
+    var liste = Array.isArray(state.clientes) ? state.clientes : [];
+    if (!liste.length) { toast('Ajoutez d\'abord une cliente'); return; }
+    if (routineBuilder.clienteIdx === null || routineBuilder.clienteIdx === undefined || !liste[routineBuilder.clienteIdx]) routineBuilder.clienteIdx = 0;
+    var cliente = liste[routineBuilder.clienteIdx];
+
+    var etapes = (routineBuilder.etapes || []).filter(function(e){ return (e.titre || '').trim() || (e.detail || '').trim(); });
+    if (!(routineBuilder.objectif || '').trim() && etapes.length === 0) { toast('Ajoutez un objectif ou une étape'); return; }
+
+    var payload = {
+      expertName: (me() && (me().name || me().email)) || 'Votre experte',
+      date: new Date().toLocaleDateString('fr-FR', { day:'numeric', month:'long', year:'numeric' }),
+      description: (routineBuilder.objectif || '').trim(),
+      etapes: etapes.map(function(e){ return { titre: e.titre || '', detail: e.detail || '', frequence: e.freq || '', emoji: e.emoji || '✨' }; }),
+      produits: (routineBuilder.produits || []).map(function(p){ return { nom: p }; }),
+      prochainRDV: routineBuilder.prochainRDV || null,
+      prochainControle: routineBuilder.prochainControle || routineBuilder.prochainRDV || null
+    };
+
+    var email = '';
+    try{ email = window.mannyelaResolveEmail ? window.mannyelaResolveEmail(cliente.email || cliente.nom) : norm(cliente.email); }catch(_){}
+
+    // 1) état local → déclenche aussi la sync client_fiches existante
+    state.rituelsEnvoyees = state.rituelsEnvoyees || [];
+    state.rituelsEnvoyees.push({ cliente: cliente.nom, clienteEmail: email, date: new Date().toISOString(), routine: payload });
+
+    // 2) table dédiée expert_rituels
+    var ok = false, errMsg = '';
+    var c = sb();
+    if (c && c.from && email) {
+      try{
+        var r = await c.from('expert_rituels').insert({
+          cliente_email: email, cliente_nom: cliente.nom || '',
+          expert_email: norm(me() && me().email), expert_nom: (me() && me().name) || 'Experte',
+          payload: payload
+        });
+        if (r && r.error) { errMsg = r.error.message || ''; log('insert rituel', r.error); } else ok = true;
+      }catch(e){ errMsg = (e && e.message) || ''; log('envoyerRoutine', e); }
+    }
+
+    // 3) lien de secours (jamais bloquant)
+    try{
+      var encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+      var base = (window.location.origin || 'https://mannyelagroup.com').replace('experts.', '').replace('experte.', '');
+      var lien = base + '?rituel=' + encoded;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(lien).catch(function(){});
+      }
+      if (!ok && typeof showRoutineLinkModal === 'function') showRoutineLinkModal(cliente.nom, lien);
+    }catch(_){}
+
+    if (ok) {
+      toast('Rituel envoyé à ' + (cliente.nom || email) + ' ✦');
+      routineBuilder.etapes = [];
+      routineBuilder.objectif = '';
+      routineBuilder.produits = [];
+      routineBuilder.prochainRDV = '';
+      routineBuilder.prochainControle = '';
+      try{ window.renderTab('routine'); }catch(_){}
+    } else if (!email) {
+      toast('⚠ Aucune adresse e-mail pour ' + (cliente.nom || 'cette cliente') + ' — ajoutez-la dans sa fiche');
+    } else {
+      toast('Rituel enregistré localement — synchronisation impossible' + (errMsg ? ' (' + errMsg + ')' : ''));
+    }
+  };
+
+  console.log('[ExpertV5] Paywall strict + rituels + suppression comptes ✦');
+})();
+</script>
 </body>
 </html>
