@@ -7618,5 +7618,772 @@ FORMAT DE RÉPONSE :
   console.log('[ExpertV5] Paywall strict + rituels + suppression comptes ✦');
 })();
 </script>
+<!-- ═══ MANNYELA EXPERTE — FIX v6 : session Supabase, diagnostic, fiche, rituels ═══ -->
+<script data-mannyela-expert-v6="1">
+(function(){
+  'use strict';
+  var GOLD = '#D4B08A', DEEP = '#003B43';
+  var LS_ACC = 'mannyela_expert_acc';
+
+  function sb(){ return window._supabaseClient || window.supabase || null; }
+  function norm(v){ return String(v||'').trim().toLowerCase(); }
+  function err(ctx, e){ try{ console.error('[ExpertV6] ' + ctx, e); }catch(_){} }
+  function toast(m){ try{ if (typeof notif === 'function') { notif(m); return; } }catch(_){} try{ console.log('[ExpertV6]', m); }catch(_){} }
+  function fail(ctx, e){
+    var msg = (e && (e.message || e.error_description || e.details || e.hint)) || String(e || 'erreur inconnue');
+    err(ctx, e);
+    toast('⚠ ' + ctx + ' : ' + msg);
+    return msg;
+  }
+  function me(){ try{ return (typeof expert !== 'undefined') ? expert : null; }catch(_){ return null; } }
+  function myEmail(){ var m = me(); return m ? norm(m.email) : ''; }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
+    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+  function paint(html){
+    var el = document.getElementById('main-content');
+    if (el) { el.innerHTML = html; try{ if (typeof lucide !== 'undefined') lucide.createIcons(); }catch(_){} }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // A) SESSION SUPABASE RÉELLE POUR CHAQUE EXPERTE  (BUG 2 + cause de BUG 3)
+  //    Sans session, le navigateur interroge la base en rôle "anon" :
+  //    les policies RLS n'autorisent que "authenticated" → 0 ligne renvoyée,
+  //    d'où fiches vides, "aucune cliente", comptes-rendus à 0.
+  // ══════════════════════════════════════════════════════════════════════
+  window.mannyelaSession = { ok:false, email:'', reason:'' };
+
+  function loginError(msg){
+    var el = document.getElementById('login-error');
+    if (el) { el.innerHTML = msg; el.style.display = 'block'; }
+  }
+
+  async function ensureProfile(email, acc){
+    var c = sb(); if (!c) return null;
+    acc = acc || {};
+    try{
+      var got = await c.from('profils_expertes').select('*').ilike('email', email).maybeSingle();
+      if (got.error) { fail('Lecture du profil experte', got.error); return null; }
+      if (got.data) return got.data;
+      var ins = await c.from('profils_expertes').insert({
+        email: email,
+        name: acc.name || email.split('@')[0],
+        ville: acc.ville || '', specialite: acc.specialite || '', tel: acc.tel || '',
+        adresse: acc.adresse || '', niveau: acc.niveau || 'Experte',
+        badge: acc.badge || 'reseau', type_compte: acc.plan || 'reseau',
+        actif: acc.actif !== false, updated_at: new Date().toISOString()
+      }).select().maybeSingle();
+      if (ins.error) { fail('Création du profil experte', ins.error); return null; }
+      return ins.data;
+    }catch(e){ fail('Profil experte', e); return null; }
+  }
+
+  function applyProfile(p){
+    if (!p) return;
+    var m = me(); if (!m) return;
+    m.paiement_ok = p.paiement_ok === true;
+    m.exonere     = p.exonere === true;
+    if (p.actif === false) m.actif = false;
+    try{ if (typeof ACCOUNTS !== 'undefined' && ACCOUNTS[norm(m.email)]) {
+      ACCOUNTS[norm(m.email)].paiement_ok = m.paiement_ok;
+      ACCOUNTS[norm(m.email)].exonere = m.exonere;
+    } }catch(_){}
+  }
+
+  window.mannyelaEnsureSession = async function(email, pwd){
+    var c = sb();
+    if (!c || !c.auth) { window.mannyelaSession = { ok:false, email:email, reason:'supabase-absent' }; return window.mannyelaSession; }
+    email = norm(email);
+    try{
+      var cur = await c.auth.getSession();
+      if (cur && cur.data && cur.data.session && norm(cur.data.session.user.email) === email) {
+        window.mannyelaSession = { ok:true, email:email, reason:'' };
+      } else {
+        var si = await c.auth.signInWithPassword({ email: email, password: pwd });
+        if (si.error) {
+          var m = si.error.message || '';
+          if (/email not confirmed|not confirmed/i.test(m)) {
+            window.mannyelaSession = { ok:false, email:email, reason:'email-not-confirmed' };
+            loginError("Votre adresse e-mail n'est pas encore confirmée. "
+              + '<a href="#" style="color:' + GOLD + ';" onclick="mannyelaResendConfirm(\'' + email + '\');return false;">Renvoyer l\'e-mail de confirmation</a>');
+            return window.mannyelaSession;
+          }
+          if (/invalid login credentials/i.test(m)) {
+            // Compte historique présent en local mais absent de Supabase Auth : on le crée.
+            var su = await c.auth.signUp({ email: email, password: pwd, options: { data: { role: 'experte' } } });
+            if (su.error && !/already registered|already exists/i.test(su.error.message || '')) {
+              window.mannyelaSession = { ok:false, email:email, reason: su.error.message };
+              err('signUp', su.error);
+              return window.mannyelaSession;
+            }
+            if (!(su.data && su.data.session)) {
+              var si2 = await c.auth.signInWithPassword({ email: email, password: pwd });
+              if (si2.error) {
+                window.mannyelaSession = { ok:false, email:email, reason: si2.error.message };
+                err('signIn (2e essai)', si2.error);
+                return window.mannyelaSession;
+              }
+            }
+            window.mannyelaSession = { ok:true, email:email, reason:'' };
+          } else {
+            window.mannyelaSession = { ok:false, email:email, reason:m };
+            err('signIn', si.error);
+            return window.mannyelaSession;
+          }
+        } else {
+          window.mannyelaSession = { ok:true, email:email, reason:'' };
+        }
+      }
+      var prof = await ensureProfile(email, me() || {});
+      applyProfile(prof);
+      try{ localStorage.setItem(LS_ACC, JSON.stringify(Object.assign({}, me() || {}, { email: email }))); }catch(_){}
+      try{ if (typeof window.mannyelaLoadFiches === 'function') window.mannyelaLoadFiches(true); }catch(_){}
+      loadDiagnostics(true);
+      loadRituels(true);
+      return window.mannyelaSession;
+    }catch(e){
+      window.mannyelaSession = { ok:false, email:email, reason: e && e.message };
+      err('ensureSession', e);
+      return window.mannyelaSession;
+    }
+  };
+
+  window.mannyelaResendConfirm = async function(email){
+    var c = sb(); if (!c) return;
+    try{
+      var r = await c.auth.resend({ type: 'signup', email: norm(email) });
+      if (r.error) { fail('Renvoi de la confirmation', r.error); return; }
+      loginError('E-mail de confirmation renvoyé à ' + esc(email) + '. Vérifiez votre boîte de réception.');
+    }catch(e){ fail('Renvoi de la confirmation', e); }
+  };
+
+  // Enveloppe la connexion : on récupère e-mail + mot de passe puis on ouvre
+  // une vraie session Supabase en arrière-plan.
+  function wrapLogin(){
+    var orig = window.login;
+    if (typeof orig !== 'function' || orig.__v6) return;
+    var wrapped = function(){
+      var email = norm((document.getElementById('login-email')||{}).value);
+      var pwd   = String((document.getElementById('login-password')||{}).value || '').replace(/[\r\n\t]/g,'').trim();
+      var ret = orig.apply(this, arguments);
+      if (email && pwd) setTimeout(function(){ window.mannyelaEnsureSession(email, pwd); }, 400);
+      return ret;
+    };
+    wrapped.__v6 = true;
+    window.login = wrapped;
+  }
+  setTimeout(wrapLogin, 0);
+  document.addEventListener('DOMContentLoaded', function(){ setTimeout(wrapLogin, 50); });
+  setTimeout(wrapLogin, 1500);
+
+  // Déconnexion : on ferme aussi la session Supabase.
+  (function(){
+    var lo = window.logout;
+    if (typeof lo === 'function' && !lo.__v6) {
+      var w = function(){ try{ var c = sb(); if (c && c.auth) c.auth.signOut(); }catch(_){}
+        try{ localStorage.removeItem(LS_ACC); }catch(_){}
+        window.mannyelaSession = { ok:false, email:'', reason:'signed-out' };
+        return lo.apply(this, arguments); };
+      w.__v6 = true; window.logout = w;
+    }
+  })();
+
+  // Persistance : si une session Supabase existe encore, on rouvre le dashboard.
+  async function restoreSession(){
+    var c = sb(); if (!c || !c.auth) return;
+    try{
+      var s = await c.auth.getSession();
+      var sess = s && s.data && s.data.session;
+      if (!sess) return;
+      var email = norm(sess.user.email);
+      window.mannyelaSession = { ok:true, email:email, reason:'' };
+      var db = document.getElementById('dashboard');
+      if (db && db.style.display !== 'none' && me()) { // déjà connecté dans l'onglet
+        loadDiagnostics(true); loadRituels(true); return;
+      }
+      var acc = null;
+      try{ acc = JSON.parse(localStorage.getItem(LS_ACC) || 'null'); }catch(_){}
+      var prof = await ensureProfile(email, acc || {});
+      if (!acc && prof) acc = { name: prof.name, email: email, niveau: prof.niveau, badge: prof.badge,
+        actif: prof.actif !== false, isAdmin: norm(email) === 'rachelle@mannyelagroup.com',
+        specialite: prof.specialite, ville: prof.ville, tel: prof.tel, adresse: prof.adresse };
+      if (!acc) return;
+      acc.email = email;
+      if (prof) { acc.paiement_ok = prof.paiement_ok === true; acc.exonere = prof.exonere === true; }
+      try{ if (typeof ACCOUNTS !== 'undefined' && !ACCOUNTS[email]) ACCOUNTS[email] = acc; }catch(_){}
+      try{ expert = acc; }catch(_){ window.expert = acc; }
+      var ls = document.getElementById('login-screen'); if (ls) ls.style.display = 'none';
+      if (db) db.style.display = 'block';
+      var sn = document.getElementById('sidebar-name');
+      if (sn) sn.innerHTML = esc(acc.name || email) + '<br/><span style="font-size:7px;letter-spacing:0.15em;color:'
+        + GOLD + ';">' + (acc.isAdmin ? '✦ Admin' : (acc.niveau || 'Experte')) + '</span>';
+      var an = document.getElementById('admin-nav-item'); if (an) an.style.display = (acc.isAdmin === true) ? 'flex' : 'none';
+      var ap = document.getElementById('nav-admin-prix'); if (ap) ap.style.display = (acc.isAdmin === true) ? 'flex' : 'none';
+      ['chargerPrixSauvegardes','chargerPrixExperte','chargerPrefsExperte','syncClientesDepuisReservations','loadRdvsExperte']
+        .forEach(function(f){ try{ if (typeof window[f] === 'function') window[f](); }catch(_){} });
+      try{ if (typeof showTab === 'function') showTab('accueil'); }catch(_){}
+      try{ if (typeof window.mannyelaLoadFiches === 'function') window.mannyelaLoadFiches(true); }catch(_){}
+      loadDiagnostics(true); loadRituels(true);
+    }catch(e){ err('restoreSession', e); }
+  }
+  setTimeout(restoreSession, 900);
+
+  // ══════════════════════════════════════════════════════════════════════
+  // B) DIAGNOSTIC — sauvegarde réelle en base  (BUG 1)
+  // ══════════════════════════════════════════════════════════════════════
+  window._diagnostics = [];
+
+  async function loadDiagnostics(force){
+    var c = sb(); if (!c || !c.from) return [];
+    if (!force && window._diagnostics.length) return window._diagnostics;
+    try{
+      var r = await c.from('diagnostics').select('*').order('created_at', { ascending:false }).limit(500);
+      if (r.error) { err('Chargement des diagnostics', r.error); return []; }
+      window._diagnostics = r.data || [];
+      return window._diagnostics;
+    }catch(e){ err('loadDiagnostics', e); return []; }
+  }
+  window.mannyelaLoadDiagnostics = loadDiagnostics;
+
+  function diagsFor(email){
+    email = norm(email);
+    return (window._diagnostics || []).filter(function(d){ return norm(d.client_email) === email; });
+  }
+
+  function clientesList(){
+    try{ return (typeof state !== 'undefined' && Array.isArray(state.clientes)) ? state.clientes : []; }catch(_){ return []; }
+  }
+
+  function resolveEmail(nomOuEmail){
+    if (typeof window.mannyelaResolveEmail === 'function') return window.mannyelaResolveEmail(nomOuEmail);
+    var q = norm(nomOuEmail);
+    if (q.indexOf('@') > 0) return q;
+    var hit = clientesList().find(function(x){ return norm(x.nom) === q && x.email; });
+    return hit ? norm(hit.email) : '';
+  }
+
+  window.sauvegarderDiagnostic = async function(){
+    var ds = window._diagState || {};
+    var r  = ds.result;
+    if (!r) { toast('Aucun résultat de diagnostic à enregistrer'); return; }
+
+    var email = norm(ds.clienteEmail || '');
+    var nom   = ds.clienteNom || '';
+    if (!email) {
+      var sel = document.getElementById('v6-diag-cliente');
+      if (sel && sel.value) { email = norm(sel.value); nom = sel.options[sel.selectedIndex].text; }
+    }
+    if (!email) {
+      var idx = (typeof state !== 'undefined') ? state.ficheClienteOuverte : null;
+      var cli = (idx !== null && idx !== undefined) ? clientesList()[idx] : null;
+      if (cli) { email = norm(cli.email || resolveEmail(cli.nom)); nom = cli.nom; }
+    }
+    if (!email) {
+      var saisie = prompt("Adresse e-mail de la cliente pour rattacher ce diagnostic :", '');
+      email = norm(saisie || '');
+    }
+    if (!email || email.indexOf('@') < 1) {
+      toast('⚠ Diagnostic non enregistré : aucune adresse e-mail de cliente. Ajoutez son e-mail dans sa fiche.');
+      return;
+    }
+
+    var c = sb();
+    if (!c) { toast('⚠ Service indisponible — diagnostic non enregistré'); return; }
+    if (!window.mannyelaSession.ok) {
+      toast('⚠ Session expirée — reconnectez-vous pour enregistrer le diagnostic');
+      err('sauvegarderDiagnostic', 'pas de session Supabase (rôle anon → RLS bloque l\'insertion)');
+      return;
+    }
+
+    var payload = {
+      expert_email: myEmail() || null,
+      client_email: email,
+      client_nom: nom || (clientesList().find(function(x){ return norm(x.email) === email; }) || {}).nom || null,
+      source: 'expert',
+      texture: r.texture || null, porosite: r.porosite || null, densite: r.densite || null,
+      etat: r.etat || null, longueur: r.longueur || null, objectif: r.objectif || null,
+      analyse: r.analyse || r.resume || null,
+      recommandations: Array.isArray(r.recommandations) ? r.recommandations : [],
+      produits: r.produits || null,
+      brut: r,
+      updated_at: new Date().toISOString()
+    };
+
+    try{
+      var ins = await c.from('diagnostics').insert(payload).select().maybeSingle();
+      if (ins.error) { fail('Enregistrement du diagnostic', ins.error); return; }
+
+      // Miroir sur la fiche capillaire (affichage côté cliente et côté experte).
+      var fiche = {
+        email: email, name: payload.client_nom || email.split('@')[0],
+        texture: r.texture || null, porosite: r.porosite || null, densite: r.densite || null,
+        etat: r.etat || null, elya_analyse: payload.analyse, updated_at: new Date().toISOString()
+      };
+      Object.keys(fiche).forEach(function(k){ if (fiche[k] === null) delete fiche[k]; });
+      var ex = await c.from('client_fiches').select('id').ilike('email', email).maybeSingle();
+      if (ex.data && ex.data.id) {
+        var upd = await c.from('client_fiches').update(fiche).eq('id', ex.data.id);
+        if (upd.error) err('Mise à jour de la fiche', upd.error);
+      } else {
+        fiche.id = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+        var insf = await c.from('client_fiches').insert(fiche);
+        if (insf.error) err('Création de la fiche', insf.error);
+      }
+
+      var loc = clientesList().find(function(x){ return norm(x.email) === email; });
+      if (loc) { ['texture','porosite','densite','etat'].forEach(function(k){ if (r[k]) loc[k] = r[k]; });
+        loc.noteDiagIA = payload.analyse || loc.noteDiagIA; }
+
+      await loadDiagnostics(true);
+      toast('✦ Diagnostic enregistré pour ' + (payload.client_nom || email));
+      window._diagState = { step: 'home' };
+      try{ if (typeof showTab === 'function') showTab('clientes'); }catch(_){}
+    }catch(e){ fail('Enregistrement du diagnostic', e); }
+  };
+
+  // Sélecteur de cliente ajouté à l'écran de résultat du diagnostic.
+  function injectDiagPicker(){
+    var host = document.getElementById('main-content');
+    if (!host) return;
+    if (document.getElementById('v6-diag-cliente')) return;
+    var ds = window._diagState || {};
+    if (!ds.result) return;
+    var btn = Array.prototype.find.call(host.querySelectorAll('button,a'), function(b){
+      return /sauvegarderDiagnostic/.test(b.getAttribute('onclick') || ''); });
+    if (!btn) return;
+    var opts = clientesList().filter(function(x){ return x.email; }).map(function(x){
+      return '<option value="' + esc(norm(x.email)) + '"' + (norm(x.email) === norm(ds.clienteEmail) ? ' selected' : '') + '>' + esc(x.nom || x.email) + '</option>'; }).join('');
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'margin:0.75rem 0;text-align:left;';
+    wrap.innerHTML = '<label style="display:block;font-size:9px;letter-spacing:0.2em;text-transform:uppercase;color:' + GOLD + ';margin-bottom:0.35rem;">Rattacher à la cliente</label>'
+      + '<select id="v6-diag-cliente" style="width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(212,176,138,0.35);color:rgba(245,245,220,0.9);padding:0.6rem;font-size:12px;">'
+      + '<option value="">— Choisir une cliente —</option>' + opts + '</select>';
+    btn.parentNode.insertBefore(wrap, btn);
+  }
+  setInterval(injectDiagPicker, 1200);
+
+  // ══════════════════════════════════════════════════════════════════════
+  // C) FICHE CLIENTE — bloc diagnostic  (BUG 3)
+  // ══════════════════════════════════════════════════════════════════════
+  function diagBlockHtml(email){
+    var list = diagsFor(email);
+    var fiche = (window._cloudFiches || []).find(function(f){ return norm(f.email) === norm(email); }) || {};
+    var d = list[0] || {};
+    var champs = [
+      ['Texture',  d.texture  || fiche.texture],
+      ['Porosité', d.porosite || fiche.porosite],
+      ['Densité',  d.densite  || fiche.densite],
+      ['État',     d.etat     || fiche.etat],
+      ['Longueur', d.longueur || fiche.longueur],
+      ['Objectif', d.objectif || fiche.objectif]
+    ];
+    var vide = champs.every(function(c){ return !c[1]; });
+    var html = '<div style="border:1px solid rgba(212,176,138,0.28);padding:1.1rem;margin:1.25rem 0;background:rgba(0,59,67,0.25);">'
+      + '<p style="font-family:Cinzel,serif;font-size:9px;letter-spacing:0.28em;text-transform:uppercase;color:' + GOLD + ';margin-bottom:0.85rem;">Diagnostic capillaire</p>';
+    if (vide) {
+      html += '<p style="font-size:10px;color:rgba(245,245,220,0.45);line-height:1.8;">Aucun diagnostic enregistré pour cette cliente.'
+        + (window.mannyelaSession.ok ? '' : '<br/><span style="color:#e5a05a;">Session non authentifiée — reconnectez-vous pour lire les données.</span>')
+        + '</p>';
+    } else {
+      html += '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:0.6rem;">'
+        + champs.map(function(c){
+            return '<div><span style="display:block;font-size:8px;letter-spacing:0.2em;text-transform:uppercase;color:rgba(245,245,220,0.35);">' + c[0] + '</span>'
+              + '<span style="font-size:11px;color:rgba(245,245,220,0.85);">' + esc(c[1] || '—') + '</span></div>'; }).join('')
+        + '</div>';
+      var an = d.analyse || fiche.elya_analyse;
+      if (an) html += '<p style="font-size:10px;line-height:1.9;color:rgba(245,245,220,0.6);margin-top:0.9rem;">' + esc(an) + '</p>';
+      var reco = (d.recommandations && d.recommandations.length) ? d.recommandations : null;
+      if (reco) html += '<ul style="margin-top:0.7rem;padding-left:1rem;">' + reco.map(function(x){
+        return '<li style="font-size:10px;color:rgba(245,245,220,0.55);line-height:1.8;">' + esc(typeof x === 'string' ? x : (x.texte || '')) + '</li>'; }).join('') + '</ul>';
+      if (d.created_at) html += '<p style="font-size:9px;color:rgba(245,245,220,0.3);margin-top:0.7rem;">Enregistré le ' + new Date(d.created_at).toLocaleDateString('fr-FR') + (list.length > 1 ? ' · ' + list.length + ' diagnostics' : '') + '</p>';
+    }
+    html += '<button onclick="mannyelaNouveauRituel(\'' + esc(norm(email)) + '\')" style="margin-top:0.9rem;font-family:Cinzel,serif;font-size:9px;letter-spacing:0.2em;text-transform:uppercase;padding:0.6rem 1.1rem;border:1px solid ' + GOLD + '55;background:transparent;color:' + GOLD + ';cursor:pointer;">✦ Créer un rituel</button>';
+    html += '</div>';
+    return html;
+  }
+
+  (function wrapFiche(){
+    var orig = window.renderFicheClienteComplete;
+    if (typeof orig !== 'function' || orig.__v6) return;
+    var w = function(idx){
+      var html = orig.apply(this, arguments);
+      try{
+        var cli = clientesList()[idx] || {};
+        var email = norm(cli.email || resolveEmail(cli.nom));
+        if (email) {
+          loadDiagnostics(false).then(function(){
+            var host = document.getElementById('v6-fiche-diag');
+            if (host) host.innerHTML = diagBlockHtml(email);
+          });
+          html = '<div id="v6-fiche-diag">' + diagBlockHtml(email) + '</div>' + html;
+        } else {
+          html = '<div style="border:1px solid rgba(229,160,90,0.35);padding:0.9rem;margin-bottom:1rem;font-size:10px;color:#e5a05a;">'
+            + "Aucune adresse e-mail sur cette fiche — le diagnostic et les rituels ne peuvent pas être rattachés.</div>" + html;
+        }
+      }catch(e){ err('fiche cliente', e); }
+      return html;
+    };
+    w.__v6 = true;
+    window.renderFicheClienteComplete = w;
+  })();
+
+  // ══════════════════════════════════════════════════════════════════════
+  // D) RITUELS — bibliothèque dynamique + création / édition / assignation
+  // ══════════════════════════════════════════════════════════════════════
+  var R = window.mannyelaRituelsState = {
+    list: [], loading: false, error: '', view: 'list',
+    filtreType: '', filtreObjectif: '',
+    form: null
+  };
+
+  function emptyForm(){
+    return { id:null, titre:'', objectif:'', type_cheveux_cible:'', frequence:'1× par semaine',
+      duree_estimee:'', notes_expertes:'', statut:'modele', client_email:'', client_nom:'',
+      etapes:[{ titre:'', description:'', duree:'' }], produits_recommandes:[] };
+  }
+
+  async function loadRituels(force){
+    var c = sb(); if (!c || !c.from) return;
+    var email = myEmail(); if (!email) return;
+    if (R.loading && !force) return;
+    R.loading = true; R.error = '';
+    try{
+      var r = await c.from('rituels').select('*').ilike('expert_email', email).order('updated_at', { ascending:false });
+      if (r.error) { R.error = r.error.message; err('Chargement des rituels', r.error); }
+      else R.list = r.data || [];
+    }catch(e){ R.error = (e && e.message) || 'erreur'; err('loadRituels', e); }
+    R.loading = false;
+    try{ if (typeof currentTab !== 'undefined' && currentTab === 'routine') renderRituels(); }catch(_){}
+  }
+  window.mannyelaLoadRituels = loadRituels;
+
+  var inputCss = 'width:100%;background:rgba(255,255,255,0.04);border:1px solid rgba(212,176,138,0.28);'
+    + 'color:rgba(245,245,220,0.9);padding:0.7rem 0.8rem;font-size:12px;font-family:Montserrat,sans-serif;outline:none;margin-bottom:0.8rem;';
+  var labelCss = 'display:block;font-family:Cinzel,serif;font-size:9px;letter-spacing:0.22em;text-transform:uppercase;color:' + GOLD + ';margin-bottom:0.35rem;';
+  function btnCss(primary){
+    return 'font-family:Cinzel,serif;font-size:9px;letter-spacing:0.2em;text-transform:uppercase;padding:0.7rem 1.3rem;cursor:pointer;'
+      + (primary ? 'border:1px solid ' + GOLD + ';background:' + GOLD + '1f;color:' + GOLD + ';'
+                 : 'border:1px solid rgba(245,245,220,0.18);background:transparent;color:rgba(245,245,220,0.55);');
+  }
+
+  function listHtml(){
+    var types = [], objs = [];
+    R.list.forEach(function(x){
+      if (x.type_cheveux_cible && types.indexOf(x.type_cheveux_cible) < 0) types.push(x.type_cheveux_cible);
+      if (x.objectif && objs.indexOf(x.objectif) < 0) objs.push(x.objectif);
+    });
+    var rows = R.list.filter(function(x){
+      return (!R.filtreType || x.type_cheveux_cible === R.filtreType)
+          && (!R.filtreObjectif || x.objectif === R.filtreObjectif);
+    });
+
+    var h = '<div style="max-width:940px;">'
+      + '<div style="display:flex;flex-wrap:wrap;gap:0.75rem;align-items:center;justify-content:space-between;margin-bottom:1.4rem;">'
+      + '<div><p style="font-family:Cinzel,serif;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:' + GOLD + ';">Bibliothèque</p>'
+      + '<h2 style="font-family:Cinzel,serif;font-size:1.35rem;color:rgba(245,245,220,0.9);margin-top:0.25rem;">Mes rituels</h2></div>'
+      + '<button onclick="mannyelaNouveauRituel()" style="' + btnCss(true) + '">✦ Créer un rituel</button>'
+      + '</div>';
+
+    if (!window.mannyelaSession.ok) {
+      h += '<div style="border:1px solid rgba(229,160,90,0.4);padding:0.85rem;margin-bottom:1.2rem;font-size:10px;color:#e5a05a;line-height:1.8;">'
+        + 'Session non authentifiée — vos rituels ne peuvent être ni lus ni enregistrés. Déconnectez-vous puis reconnectez-vous.</div>';
+    }
+    if (R.error) {
+      h += '<div style="border:1px solid rgba(220,90,90,0.4);padding:0.85rem;margin-bottom:1.2rem;font-size:10px;color:#e58080;line-height:1.8;">Erreur base de données : ' + esc(R.error) + '</div>';
+    }
+
+    h += '<div style="display:flex;gap:0.6rem;flex-wrap:wrap;margin-bottom:1.2rem;">'
+      + '<select onchange="mannyelaRituelsState.filtreType=this.value;mannyelaRenderRituels()" style="' + inputCss + 'width:auto;margin:0;">'
+      + '<option value="">Tous les types de cheveux</option>'
+      + types.map(function(t){ return '<option' + (R.filtreType === t ? ' selected' : '') + '>' + esc(t) + '</option>'; }).join('')
+      + '</select>'
+      + '<select onchange="mannyelaRituelsState.filtreObjectif=this.value;mannyelaRenderRituels()" style="' + inputCss + 'width:auto;margin:0;">'
+      + '<option value="">Tous les objectifs</option>'
+      + objs.map(function(t){ return '<option' + (R.filtreObjectif === t ? ' selected' : '') + '>' + esc(t) + '</option>'; }).join('')
+      + '</select></div>';
+
+    if (R.loading && !R.list.length) h += '<p style="font-size:11px;color:rgba(245,245,220,0.4);">Chargement…</p>';
+    else if (!rows.length) h += '<p style="font-size:11px;color:rgba(245,245,220,0.4);line-height:1.9;">Aucun rituel pour le moment. Créez votre premier modèle, puis assignez-le à une cliente depuis sa fiche.</p>';
+    else h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0.9rem;">'
+      + rows.map(function(x){
+        var nb = (x.etapes || []).length;
+        return '<div style="border:1px solid rgba(212,176,138,0.25);background:rgba(0,59,67,0.28);padding:1rem;">'
+          + '<p style="font-family:Cinzel,serif;font-size:12px;color:rgba(245,245,220,0.9);margin-bottom:0.3rem;">' + esc(x.titre) + '</p>'
+          + '<p style="font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:' + GOLD + 'aa;margin-bottom:0.55rem;">'
+          + (x.statut === 'assigne' ? 'Assigné · ' + esc(x.client_nom || x.client_email || '') : 'Modèle') + '</p>'
+          + (x.objectif ? '<p style="font-size:10px;color:rgba(245,245,220,0.55);line-height:1.7;">' + esc(x.objectif) + '</p>' : '')
+          + '<p style="font-size:9px;color:rgba(245,245,220,0.35);margin-top:0.5rem;">' + nb + ' étape' + (nb > 1 ? 's' : '')
+          + (x.frequence ? ' · ' + esc(x.frequence) : '') + (x.type_cheveux_cible ? ' · ' + esc(x.type_cheveux_cible) : '') + '</p>'
+          + '<div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.85rem;">'
+          + '<button onclick="mannyelaEditRituel(\'' + x.id + '\')" style="' + btnCss(false) + 'padding:0.45rem 0.8rem;">Modifier</button>'
+          + '<button onclick="mannyelaAssignerRituel(\'' + x.id + '\')" style="' + btnCss(true) + 'padding:0.45rem 0.8rem;">Assigner</button>'
+          + '<button onclick="mannyelaSupprimerRituel(\'' + x.id + '\')" style="' + btnCss(false) + 'padding:0.45rem 0.8rem;color:rgba(220,110,110,0.7);">Supprimer</button>'
+          + '</div></div>';
+      }).join('') + '</div>';
+
+    return h + '</div>';
+  }
+
+  function formHtml(){
+    var f = R.form || emptyForm();
+    var cl = clientesList().filter(function(x){ return x.email; });
+    var h = '<div style="max-width:760px;">'
+      + '<p style="font-family:Cinzel,serif;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:' + GOLD + ';">Rituel</p>'
+      + '<h2 style="font-family:Cinzel,serif;font-size:1.35rem;color:rgba(245,245,220,0.9);margin:0.25rem 0 1.4rem;">' + (f.id ? 'Modifier le rituel' : 'Nouveau rituel') + '</h2>'
+
+      + '<label style="' + labelCss + '">Titre *</label>'
+      + '<input id="v6r-titre" style="' + inputCss + '" value="' + esc(f.titre) + '" placeholder="ex : Rituel hydratation intense" />'
+
+      + '<label style="' + labelCss + '">Objectif</label>'
+      + '<input id="v6r-objectif" style="' + inputCss + '" value="' + esc(f.objectif) + '" placeholder="ex : Restaurer l\'hydratation et définir les boucles" />'
+
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0.8rem;">'
+      + '<div><label style="' + labelCss + '">Type de cheveux ciblé</label>'
+      + '<input id="v6r-type" style="' + inputCss + '" value="' + esc(f.type_cheveux_cible) + '" placeholder="ex : 4A-4C" /></div>'
+      + '<div><label style="' + labelCss + '">Fréquence</label>'
+      + '<input id="v6r-freq" style="' + inputCss + '" value="' + esc(f.frequence) + '" placeholder="ex : 1× par semaine" /></div>'
+      + '<div><label style="' + labelCss + '">Durée estimée</label>'
+      + '<input id="v6r-duree" style="' + inputCss + '" value="' + esc(f.duree_estimee) + '" placeholder="ex : 45 min" /></div>'
+      + '</div>'
+
+      + '<label style="' + labelCss + 'margin-top:0.6rem;">Étapes</label>';
+
+    f.etapes.forEach(function(e, i){
+      h += '<div style="border:1px solid rgba(212,176,138,0.2);padding:0.8rem;margin-bottom:0.7rem;background:rgba(0,59,67,0.2);">'
+        + '<div style="display:flex;gap:0.4rem;align-items:center;margin-bottom:0.5rem;">'
+        + '<span style="font-family:Cinzel,serif;font-size:10px;color:' + GOLD + ';">Étape ' + (i + 1) + '</span>'
+        + '<span style="flex:1;"></span>'
+        + '<button onclick="mannyelaMoveEtape(' + i + ',-1)" style="' + btnCss(false) + 'padding:0.25rem 0.55rem;">↑</button>'
+        + '<button onclick="mannyelaMoveEtape(' + i + ',1)" style="' + btnCss(false) + 'padding:0.25rem 0.55rem;">↓</button>'
+        + '<button onclick="mannyelaDelEtape(' + i + ')" style="' + btnCss(false) + 'padding:0.25rem 0.55rem;color:rgba(220,110,110,0.75);">×</button>'
+        + '</div>'
+        + '<input oninput="mannyelaRituelsState.form.etapes[' + i + '].titre=this.value" style="' + inputCss + 'margin-bottom:0.5rem;" value="' + esc(e.titre) + '" placeholder="Titre de l\'étape" />'
+        + '<textarea oninput="mannyelaRituelsState.form.etapes[' + i + '].description=this.value" style="' + inputCss + 'min-height:64px;resize:vertical;margin-bottom:0.5rem;" placeholder="Description / geste à réaliser">' + esc(e.description) + '</textarea>'
+        + '<input oninput="mannyelaRituelsState.form.etapes[' + i + '].duree=this.value" style="' + inputCss + 'margin-bottom:0;" value="' + esc(e.duree) + '" placeholder="Durée (ex : 10 min)" />'
+        + '</div>';
+    });
+
+    h += '<button onclick="mannyelaAddEtape()" style="' + btnCss(false) + 'margin-bottom:1.2rem;">+ Ajouter une étape</button>'
+
+      + '<label style="' + labelCss + '">Produits recommandés</label>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.6rem;">'
+      + f.produits_recommandes.map(function(p, i){
+          var nom = typeof p === 'string' ? p : (p.nom || '');
+          return '<span style="border:1px solid rgba(212,176,138,0.3);padding:0.35rem 0.6rem;font-size:10px;color:rgba(245,245,220,0.75);">'
+            + esc(nom) + ' <a href="#" onclick="mannyelaDelProduit(' + i + ');return false;" style="color:rgba(220,110,110,0.8);text-decoration:none;">×</a></span>'; }).join('')
+      + '</div>'
+      + '<div style="display:flex;gap:0.5rem;margin-bottom:1rem;">'
+      + '<input id="v6r-produit" style="' + inputCss + 'margin:0;" placeholder="Nom du produit (Entrée pour ajouter)" onkeydown="if(event.key===\'Enter\'){mannyelaAddProduit();}" />'
+      + '<button onclick="mannyelaAddProduit()" style="' + btnCss(false) + '">Ajouter</button></div>'
+
+      + '<label style="' + labelCss + '">Notes de l\'experte</label>'
+      + '<textarea id="v6r-notes" style="' + inputCss + 'min-height:80px;resize:vertical;">' + esc(f.notes_expertes) + '</textarea>'
+
+      + '<label style="' + labelCss + '">Assigner à une cliente (optionnel)</label>'
+      + '<select id="v6r-client" style="' + inputCss + '"><option value="">— Modèle non assigné —</option>'
+      + cl.map(function(x){ return '<option value="' + esc(norm(x.email)) + '"' + (norm(x.email) === norm(f.client_email) ? ' selected' : '') + '>' + esc(x.nom || x.email) + '</option>'; }).join('')
+      + '</select>'
+
+      + '<div style="display:flex;gap:0.6rem;flex-wrap:wrap;margin-top:0.5rem;">'
+      + '<button onclick="mannyelaSaveRituel()" style="' + btnCss(true) + '">✦ Enregistrer</button>'
+      + '<button onclick="mannyelaRituelsState.view=\'list\';mannyelaRenderRituels()" style="' + btnCss(false) + '">Annuler</button>'
+      + '</div></div>';
+    return h;
+  }
+
+  function renderRituels(){ paint(R.view === 'form' ? formHtml() : listHtml()); }
+  window.mannyelaRenderRituels = renderRituels;
+
+  window.mannyelaAddEtape = function(){ R.form.etapes.push({ titre:'', description:'', duree:'' }); renderRituels(); };
+  window.mannyelaDelEtape = function(i){ R.form.etapes.splice(i, 1); if (!R.form.etapes.length) R.form.etapes.push({ titre:'', description:'', duree:'' }); renderRituels(); };
+  window.mannyelaMoveEtape = function(i, d){
+    var j = i + d; if (j < 0 || j >= R.form.etapes.length) return;
+    var t = R.form.etapes[i]; R.form.etapes[i] = R.form.etapes[j]; R.form.etapes[j] = t; renderRituels();
+  };
+  window.mannyelaAddProduit = function(){
+    var el = document.getElementById('v6r-produit'); if (!el) return;
+    var v = (el.value || '').trim(); if (!v) return;
+    R.form.produits_recommandes.push({ nom: v }); syncFormFields(); renderRituels();
+  };
+  window.mannyelaDelProduit = function(i){ R.form.produits_recommandes.splice(i, 1); syncFormFields(); renderRituels(); };
+
+  function syncFormFields(){
+    var g = function(id){ var e = document.getElementById(id); return e ? e.value : undefined; };
+    var f = R.form; if (!f) return;
+    if (g('v6r-titre')    !== undefined) f.titre = g('v6r-titre');
+    if (g('v6r-objectif') !== undefined) f.objectif = g('v6r-objectif');
+    if (g('v6r-type')     !== undefined) f.type_cheveux_cible = g('v6r-type');
+    if (g('v6r-freq')     !== undefined) f.frequence = g('v6r-freq');
+    if (g('v6r-duree')    !== undefined) f.duree_estimee = g('v6r-duree');
+    if (g('v6r-notes')    !== undefined) f.notes_expertes = g('v6r-notes');
+    if (g('v6r-client')   !== undefined) f.client_email = g('v6r-client');
+  }
+
+  window.mannyelaNouveauRituel = function(clientEmail){
+    R.form = emptyForm();
+    if (clientEmail) {
+      R.form.client_email = norm(clientEmail);
+      var cli = clientesList().find(function(x){ return norm(x.email) === norm(clientEmail); });
+      R.form.client_nom = cli ? cli.nom : '';
+      var d = diagsFor(clientEmail)[0];
+      if (d) {
+        R.form.type_cheveux_cible = d.texture || '';
+        R.form.objectif = d.objectif || (d.analyse ? '' : '');
+        R.form.diagnostic_id = d.id;
+      }
+    }
+    R.view = 'form';
+    try{ if (typeof showTab === 'function') showTab('routine'); }catch(_){}
+    setTimeout(renderRituels, 30);
+  };
+
+  window.mannyelaEditRituel = function(id){
+    var x = R.list.find(function(r){ return r.id === id; }); if (!x) return;
+    R.form = {
+      id: x.id, titre: x.titre || '', objectif: x.objectif || '', type_cheveux_cible: x.type_cheveux_cible || '',
+      frequence: x.frequence || '', duree_estimee: x.duree_estimee || '', notes_expertes: x.notes_expertes || '',
+      statut: x.statut || 'modele', client_email: x.client_email || '', client_nom: x.client_nom || '',
+      diagnostic_id: x.diagnostic_id || null,
+      etapes: (x.etapes && x.etapes.length) ? x.etapes.map(function(e){ return { titre:e.titre||'', description:e.description||e.detail||'', duree:e.duree||e.frequence||'' }; }) : [{ titre:'', description:'', duree:'' }],
+      produits_recommandes: x.produits_recommandes || []
+    };
+    R.view = 'form'; renderRituels();
+  };
+
+  window.mannyelaSupprimerRituel = async function(id){
+    if (!confirm('Supprimer définitivement ce rituel ?')) return;
+    var c = sb(); if (!c) return;
+    try{
+      var r = await c.from('rituels').delete().eq('id', id).select();
+      if (r.error) { fail('Suppression du rituel', r.error); return; }
+      if (!r.data || !r.data.length) { toast('⚠ Suppression refusée — ce rituel ne vous appartient pas'); return; }
+      toast('Rituel supprimé');
+      await loadRituels(true); renderRituels();
+    }catch(e){ fail('Suppression du rituel', e); }
+  };
+
+  window.mannyelaSaveRituel = async function(){
+    syncFormFields();
+    var f = R.form; if (!f) return;
+    if (!(f.titre || '').trim()) { toast('⚠ Le titre du rituel est obligatoire'); return; }
+    var etapes = f.etapes.filter(function(e){ return (e.titre || '').trim() || (e.description || '').trim(); });
+    var c = sb();
+    if (!c) { toast('⚠ Service indisponible'); return; }
+    if (!window.mannyelaSession.ok) { toast('⚠ Session expirée — reconnectez-vous pour enregistrer'); return; }
+
+    var cli = clientesList().find(function(x){ return norm(x.email) === norm(f.client_email); });
+    var payload = {
+      expert_email: myEmail(), expert_nom: (me() || {}).name || null,
+      client_email: f.client_email ? norm(f.client_email) : null,
+      client_nom: f.client_email ? (cli ? cli.nom : f.client_nom || null) : null,
+      diagnostic_id: f.diagnostic_id || null,
+      titre: f.titre.trim(), objectif: f.objectif || null, type_cheveux_cible: f.type_cheveux_cible || null,
+      frequence: f.frequence || null, duree_estimee: f.duree_estimee || null,
+      etapes: etapes, produits_recommandes: f.produits_recommandes || [],
+      notes_expertes: f.notes_expertes || null,
+      statut: f.client_email ? 'assigne' : 'modele',
+      updated_at: new Date().toISOString()
+    };
+
+    try{
+      var res;
+      if (f.id) res = await c.from('rituels').update(payload).eq('id', f.id).select();
+      else      res = await c.from('rituels').insert(payload).select();
+      if (res.error) { fail('Enregistrement du rituel', res.error); return; }
+      if (!res.data || !res.data.length) { toast('⚠ Enregistrement refusé par la base (droits insuffisants)'); return; }
+      if (payload.client_email) await mirrorToFiche(payload);
+      toast('✦ Rituel enregistré' + (payload.client_email ? ' et envoyé à ' + (payload.client_nom || payload.client_email) : ''));
+      R.view = 'list';
+      await loadRituels(true); renderRituels();
+    }catch(e){ fail('Enregistrement du rituel', e); }
+  };
+
+  // Assignation : copie du modèle avec la cliente renseignée (le modèle reste intact).
+  window.mannyelaAssignerRituel = async function(id){
+    var x = R.list.find(function(r){ return r.id === id; }); if (!x) return;
+    var cl = clientesList().filter(function(y){ return y.email; });
+    if (!cl.length) { toast('⚠ Aucune cliente avec adresse e-mail dans votre liste'); return; }
+    var choix = prompt('Assigner « ' + x.titre + ' » à :\n\n'
+      + cl.map(function(y, i){ return (i + 1) + ') ' + (y.nom || y.email); }).join('\n')
+      + '\n\nNuméro de la cliente :', '1');
+    var i = parseInt(choix, 10) - 1;
+    if (isNaN(i) || !cl[i]) return;
+    var cible = cl[i];
+    var c = sb(); if (!c) return;
+    var copie = {
+      expert_email: myEmail(), expert_nom: (me() || {}).name || null,
+      client_email: norm(cible.email), client_nom: cible.nom || null,
+      diagnostic_id: x.diagnostic_id || (diagsFor(cible.email)[0] || {}).id || null,
+      titre: x.titre, objectif: x.objectif, type_cheveux_cible: x.type_cheveux_cible,
+      frequence: x.frequence, duree_estimee: x.duree_estimee,
+      etapes: x.etapes || [], produits_recommandes: x.produits_recommandes || [],
+      notes_expertes: x.notes_expertes, statut: 'assigne', updated_at: new Date().toISOString()
+    };
+    try{
+      var r = await c.from('rituels').insert(copie).select();
+      if (r.error) { fail('Assignation du rituel', r.error); return; }
+      await mirrorToFiche(copie);
+      toast('✦ Rituel assigné à ' + (cible.nom || cible.email));
+      await loadRituels(true); renderRituels();
+    }catch(e){ fail('Assignation du rituel', e); }
+  };
+
+  // Miroir dans client_fiches.rituels pour l'affichage côté cliente.
+  async function mirrorToFiche(p){
+    var c = sb(); if (!c) return;
+    try{
+      var entry = {
+        expertName: p.expert_nom || '', date: new Date().toISOString().split('T')[0],
+        titre: p.titre, description: p.objectif || '',
+        etapes: (p.etapes || []).map(function(e){ return { titre: e.titre, detail: e.description, frequence: e.duree || p.frequence, emoji: '✦' }; }),
+        produits: (p.produits_recommandes || []).map(function(x){ return typeof x === 'string' ? { nom: x } : x; }),
+        prochainRDV: null, prochainControle: null
+      };
+      var f = await c.from('client_fiches').select('id,rituels').ilike('email', p.client_email).maybeSingle();
+      if (f.error) { err('mirrorToFiche select', f.error); return; }
+      if (f.data && f.data.id) {
+        var arr = Array.isArray(f.data.rituels) ? f.data.rituels : [];
+        arr.unshift(entry);
+        var u = await c.from('client_fiches').update({ rituels: arr, updated_at: new Date().toISOString() }).eq('id', f.data.id);
+        if (u.error) err('mirrorToFiche update', u.error);
+      } else {
+        var id = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
+        var i2 = await c.from('client_fiches').insert({ id:id, email: p.client_email, name: p.client_nom || '', rituels: [entry], updated_at: new Date().toISOString() });
+        if (i2.error) err('mirrorToFiche insert', i2.error);
+      }
+      // Table dédiée déjà utilisée par le site cliente (si présente).
+      try{
+        await c.from('expert_rituels').insert({
+          client_email: p.client_email, expert_name: p.expert_nom || '',
+          description: p.objectif || p.titre, etapes: entry.etapes, produits: entry.produits
+        });
+      }catch(_){}
+    }catch(e){ err('mirrorToFiche', e); }
+  }
+
+  // Branchement sur l'onglet « Rituels ».
+  function wrapRenderTab(){
+    var orig = window.renderTab;
+    if (typeof orig !== 'function' || orig.__v6) return;
+    var w = function(tab){
+      if (tab === 'routine') {
+        var locked = (typeof window.mannyelaIsPaid === 'function') && !window.mannyelaIsPaid();
+        if (!locked) {
+          try{ currentTab = 'routine'; }catch(_){}
+          if (!R.list.length && !R.loading) loadRituels(true);
+          renderRituels();
+          return;
+        }
+      }
+      return orig.apply(this, arguments);
+    };
+    w.__v6 = true;
+    window.renderTab = w;
+  }
+  setTimeout(wrapRenderTab, 0);
+  setTimeout(wrapRenderTab, 1600);
+
+  console.log('[ExpertV6] Session Supabase + diagnostic + fiche + rituels ✦');
+})();
+</script>
 </body>
 </html>
