@@ -8653,5 +8653,246 @@ FORMAT DE RÉPONSE :
 })();
 </script>
 
+
+<!-- ═══ MANNYELA EXPERTE — AUTH v17 : authoritative returning-login flow ═══ -->
+<script data-mannyela-auth-v17="1">
+(function(){
+  'use strict';
+  var PROFILE_DRAFT_KEY = 'mannyela_expert_profile_draft';
+  var SESSION_CACHE_KEY = 'mannyela_expert_acc';
+  var FOUNDER_EMAIL = 'rachelle@mannyelagroup.com';
+
+  function client(){ return window._supabaseClient || null; }
+  function normalize(value){ return String(value || '').trim().toLowerCase(); }
+  function field(id){ return document.getElementById(id); }
+  function setError(message, allowHtml){
+    var el = field('login-error');
+    if (!el) return;
+    if (allowHtml) el.innerHTML = message; else el.textContent = message;
+    el.style.display = message ? 'block' : 'none';
+  }
+  function setBusy(busy){
+    var button = document.querySelector('#form-login .btn-primary, #login-screen button[onclick="login()"]');
+    if (!button) return;
+    button.disabled = busy;
+    button.style.opacity = busy ? '0.55' : '1';
+    button.style.cursor = busy ? 'wait' : 'pointer';
+  }
+  function authMessage(error){
+    var message = String((error && error.message) || error || '').toLowerCase();
+    if (message.indexOf('email not confirmed') >= 0) return 'email-not-confirmed';
+    if (message.indexOf('invalid login credentials') >= 0) return 'invalid-credentials';
+    if (message.indexOf('rate limit') >= 0 || message.indexOf('too many') >= 0) return 'rate-limit';
+    return 'auth-error';
+  }
+  function draftFromStorage(email){
+    try {
+      var draft = JSON.parse(localStorage.getItem(PROFILE_DRAFT_KEY) || 'null');
+      return draft && normalize(draft.email) === email ? draft : null;
+    } catch (_) { return null; }
+  }
+  function profilePayload(user, draft){
+    var meta = (user && user.user_metadata) || {};
+    draft = draft || {};
+    return {
+      user_id: user.id,
+      email: normalize(user.email),
+      name: draft.name || meta.name || normalize(user.email).split('@')[0],
+      ville: draft.ville || meta.ville || '',
+      specialite: draft.specialite || meta.specialite || '',
+      tel: draft.tel || meta.tel || '',
+      adresse: draft.adresse || meta.adresse || '',
+      niveau: draft.niveau || meta.niveau || 'Experte Réseau',
+      badge: draft.badge || meta.badge || 'reseau',
+      type_compte: draft.type_compte || meta.type_compte || 'reseau',
+      actif: draft.actif !== false,
+      updated_at: new Date().toISOString()
+    };
+  }
+  async function loadOrCreateProfile(user){
+    var c = client();
+    var email = normalize(user.email);
+    var result = await c.from('profils_expertes').select('*').eq('user_id', user.id).maybeSingle();
+    if (result.error && !/column .*user_id/i.test(result.error.message || '')) throw result.error;
+    if (!result.data) {
+      result = await c.from('profils_expertes').select('*').ilike('email', email).maybeSingle();
+      if (result.error) throw result.error;
+    }
+    if (result.data) {
+      if (!result.data.user_id) {
+        var linked = await c.from('profils_expertes').update({ user_id:user.id, updated_at:new Date().toISOString() }).eq('email', result.data.email).select().maybeSingle();
+        if (!linked.error && linked.data) result.data = linked.data;
+      }
+      return result.data;
+    }
+    var created = await c.from('profils_expertes').insert(profilePayload(user, draftFromStorage(email))).select().single();
+    if (created.error) throw created.error;
+    return created.data;
+  }
+  function enter(profile, user){
+    var email = normalize(user.email);
+    var account = {
+      name: profile.name || email.split('@')[0], email: email,
+      niveau: profile.niveau || 'Experte Réseau', badge: profile.badge || 'reseau',
+      plan: profile.type_compte || 'reseau', actif: profile.actif !== false,
+      isAdmin: email === FOUNDER_EMAIL, exonere: profile.exonere === true,
+      paiement_ok: profile.paiement_ok === true, abonnementActif: profile.paiement_ok === true || profile.exonere === true,
+      specialite: profile.specialite || '', ville: profile.ville || '', adresse: profile.adresse || '', tel: profile.tel || '', bio: profile.bio || ''
+    };
+    try { localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(account)); } catch (_) {}
+    if (typeof ACCOUNTS !== 'undefined') ACCOUNTS[email] = account;
+    if (typeof window._enterDashboard === 'function') window._enterDashboard(account, email);
+    else {
+      expert = account;
+      var loginScreen = field('login-screen'); if (loginScreen) loginScreen.style.display = 'none';
+      var dashboard = field('dashboard'); if (dashboard) dashboard.style.display = 'block';
+      try { if (typeof showTab === 'function') showTab('accueil'); } catch (_) {}
+    }
+    window.mannyelaSession = { ok:true, email:email, reason:'' };
+  }
+
+  window._expCloudSignup = async function(data, password){
+    var c = client();
+    if (!c || !c.auth) return { ok:false, reason:'Service de connexion indisponible.' };
+    var email = normalize(data && data.email);
+    var metadata = {
+      name:data.name || '', ville:data.ville || '', specialite:data.specialite || '', tel:data.tel || '', adresse:data.adresse || '',
+      niveau:data.niveau || 'Experte Réseau', badge:data.badge || 'reseau', type_compte:data.type_compte || 'reseau', actif:data.actif !== false, role:'experte'
+    };
+    try { localStorage.setItem(PROFILE_DRAFT_KEY, JSON.stringify(Object.assign({ email:email }, metadata))); } catch (_) {}
+    var signup = await c.auth.signUp({
+      email:email, password:password,
+      options:{ emailRedirectTo:window.location.origin + window.location.pathname, data:metadata }
+    });
+    if (signup.error) {
+      console.error('[AuthV17] signup', signup.error);
+      var regError = field('reg-error-exp');
+      if (regError) { regError.textContent = 'Création du compte impossible : ' + signup.error.message; regError.style.display = 'block'; }
+      return { ok:false, reason:signup.error.message };
+    }
+    if (signup.data && signup.data.session && signup.data.user) {
+      try { await loadOrCreateProfile(signup.data.user); } catch (error) { console.error('[AuthV17] profile after signup', error); }
+    }
+    return { ok:true, needsConfirm:!(signup.data && signup.data.session) };
+  };
+
+  window.login = async function(){
+    var email = normalize(field('login-email') && field('login-email').value);
+    var password = String((field('login-password') && field('login-password').value) || '').replace(/[\r\n\t]/g, '').trim();
+    setError('');
+    if (!email || !password) { setError('Identifiant et mot de passe requis.'); return; }
+
+    // The founder is the only intentional local account. Every registered expert must use Auth.
+    if (email === FOUNDER_EMAIL && typeof ACCOUNTS !== 'undefined' && ACCOUNTS[email] && ACCOUNTS[email].pwd) {
+      var local = ACCOUNTS[email];
+      var valid = local.pwd === password;
+      if (!valid) { try { valid = atob(local.pwd) === password; } catch (_) {} }
+      if (!valid) { setError('Mot de passe incorrect.'); return; }
+      if (typeof window._enterDashboard === 'function') window._enterDashboard(local, email);
+      else { expert = Object.assign({}, local, {email:email}); field('login-screen').style.display='none'; field('dashboard').style.display='block'; showTab('accueil'); }
+      return;
+    }
+
+    var c = client();
+    if (!c || !c.auth) { setError('Service de connexion indisponible — vérifiez votre connexion puis réessayez.'); return; }
+    setBusy(true);
+    try {
+      var signedIn = await c.auth.signInWithPassword({ email:email, password:password });
+      if (signedIn.error || !signedIn.data || !signedIn.data.user) {
+        var category = authMessage(signedIn.error);
+        console.error('[AuthV17] login', signedIn.error);
+        if (category === 'email-not-confirmed') {
+          setError('Votre adresse e-mail n’est pas encore confirmée. Vérifiez votre boîte de réception et vos spams, puis réessayez.', false);
+        } else if (category === 'invalid-credentials') {
+          setError('E-mail ou mot de passe incorrect. Utilisez « Mot de passe oublié ? » si nécessaire.');
+        } else if (category === 'rate-limit') {
+          setError('Trop de tentatives. Attendez quelques minutes avant de réessayer.');
+        } else {
+          setError('Connexion impossible : ' + ((signedIn.error && signedIn.error.message) || 'erreur inconnue'));
+        }
+        return;
+      }
+      var profile = await loadOrCreateProfile(signedIn.data.user);
+      if (profile.actif === false && normalize(profile.badge) === 'candidature') {
+        await c.auth.signOut();
+        setError('Votre candidature est toujours en attente de validation par notre équipe.');
+        return;
+      }
+      try { localStorage.removeItem(PROFILE_DRAFT_KEY); } catch (_) {}
+      enter(profile, signedIn.data.user);
+    } catch (error) {
+      console.error('[AuthV17] login/profile', error);
+      setError('Connexion établie, mais le profil experte ne peut pas être chargé : ' + ((error && error.message) || 'erreur base de données'));
+    } finally { setBusy(false); }
+  };
+  var authoritativeLogin = window.login;
+  window.login.__v17 = true;
+  window.login.__v6 = true;
+  window.login.__v16 = true;
+
+  // Inline onclick handlers in this legacy file can retain the original lexical
+  // `login` binding. Capture the real submit/click before those handlers run.
+  function bindAuthoritativeLogin(){
+    var form = field('form-login');
+    if (form && !form.dataset.authV17) {
+      form.dataset.authV17 = '1';
+      form.addEventListener('submit', function(event){ event.preventDefault(); event.stopImmediatePropagation(); authoritativeLogin(); }, true);
+    }
+    var button = document.querySelector('#form-login .btn-primary, #login-screen button[onclick="login()"]');
+    if (button && !button.dataset.authV17) {
+      button.dataset.authV17 = '1';
+      button.removeAttribute('onclick');
+      button.addEventListener('click', function(event){ event.preventDefault(); event.stopImmediatePropagation(); authoritativeLogin(); }, true);
+    }
+    var passwordInput = field('login-password');
+    if (passwordInput && !passwordInput.dataset.authV17) {
+      passwordInput.dataset.authV17 = '1';
+      passwordInput.addEventListener('keydown', function(event){
+        if (event.key === 'Enter') { event.preventDefault(); event.stopImmediatePropagation(); authoritativeLogin(); }
+      }, true);
+    }
+  }
+  bindAuthoritativeLogin();
+  document.addEventListener('DOMContentLoaded', bindAuthoritativeLogin);
+  setTimeout(bindAuthoritativeLogin, 2000);
+  // Earlier legacy patches schedule wrappers up to 3.6s after load. Reclaim the global afterwards.
+  setTimeout(function(){ window.login = authoritativeLogin; bindAuthoritativeLogin(); }, 4200);
+
+  window.logout = async function(){
+    setBusy(false);
+    try {
+      var c = client();
+      if (c && c.auth) {
+        var result = await c.auth.signOut();
+        if (result.error) console.error('[AuthV17] logout', result.error);
+      }
+    } catch (error) { console.error('[AuthV17] logout', error); }
+    try { localStorage.removeItem(SESSION_CACHE_KEY); } catch (_) {}
+    window.mannyelaSession = { ok:false, email:'', reason:'signed-out' };
+    try { expert = null; } catch (_) { window.expert = null; }
+    var dashboard = field('dashboard'); if (dashboard) { dashboard.style.display='none'; dashboard.style.opacity='1'; }
+    var loginScreen = field('login-screen'); if (loginScreen) loginScreen.style.display='flex';
+    if (field('login-email')) field('login-email').value='';
+    if (field('login-password')) field('login-password').value='';
+    setError('');
+  };
+  window.logout.__v17 = true;
+
+  async function restoreConfirmedSession(){
+    var c = client();
+    if (!c || !c.auth) { setTimeout(restoreConfirmedSession, 300); return; }
+    try {
+      var current = await c.auth.getUser();
+      if (!current.error && current.data && current.data.user) {
+        var profile = await loadOrCreateProfile(current.data.user);
+        if (!(profile.actif === false && normalize(profile.badge) === 'candidature')) enter(profile, current.data.user);
+      }
+    } catch (error) { console.error('[AuthV17] restore', error); }
+  }
+  setTimeout(restoreConfirmedSession, 500);
+  console.log('[AuthV17] Returning expert authentication active');
+})();
+</script>
+
 </body>
 </html>
