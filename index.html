@@ -6317,7 +6317,7 @@ FORMAT DE RÉPONSE :
   <script src="auth.js"></script>
 
   <!-- Marqueur de version -->
-  <div id="exp-version" style="position:fixed;bottom:4px;left:6px;font-size:9px;color:rgba(196,149,106,0.5);font-family:'Cinzel',serif;letter-spacing:0.12em;z-index:99999;pointer-events:none;">✦ exp-v14 · 11-08</div>
+  <div id="exp-version" style="position:fixed;bottom:4px;left:6px;font-size:9px;color:rgba(196,149,106,0.5);font-family:'Cinzel',serif;letter-spacing:0.12em;z-index:99999;pointer-events:none;">✦ exp-v16 · 11-08</div>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
        CONNEXION EXPERTE "local-first" — placé en TOUT DERNIER pour neutraliser
@@ -8590,7 +8590,11 @@ FORMAT DE RÉPONSE :
         var si = await c.auth.signInWithPassword({ email: email, password: pwd });
         if (si.error || !si.data || !si.data.user){
           var m = (si.error && si.error.message) || '';
-          if (/not confirm/i.test(m)) return { ok:false, reason:'email-not-confirmed' };
+          if (/not confirm/i.test(m)) {
+            try{ c.auth.resend({ type:'signup', email: email }); }catch(_){}
+            setTimeout(function(){ var el=document.getElementById('login-error'); if(el){ el.style.display='block'; el.innerHTML="Votre e-mail n'est pas encore confirme. Ouvrez le lien recu par e-mail (pensez aux spams), puis reconnectez-vous. Un nouveau lien vient d'etre envoye."; } }, 60);
+            return { ok:false, reason:'email-not-confirmed' };
+          }
           return { ok:false, reason:'bad-credentials' };
         }
 
@@ -8625,7 +8629,27 @@ FORMAT DE RÉPONSE :
   }
 
   setTimeout(apply, 0); setTimeout(apply, 1600); setTimeout(apply, 3200);
-  console.log('[ExpertV8] Connexion Supabase + auto-création du profil ✦ (exp-v14)');
+
+  // v16 : evite le blocage a la reconnexion. Un compte mis en cache sans mot de
+  // passe local (issu du cloud/candidature) doit repasser par Supabase.
+  function applyLoginGuard(){
+    if (typeof window.login !== 'function' || window.login.__v16) return;
+    var orig = window.login;
+    var w = function(){
+      try{
+        var el = document.getElementById('login-email');
+        var em = norm(el && el.value);
+        if (em && typeof ACCOUNTS !== 'undefined' && ACCOUNTS[em] && !ACCOUNTS[em].pwd){
+          delete ACCOUNTS[em];
+        }
+      }catch(_){}
+      return orig.apply(this, arguments);
+    };
+    w.__v16 = true; w.__v6 = true;
+    window.login = w;
+  }
+  setTimeout(applyLoginGuard, 2000); setTimeout(applyLoginGuard, 3600);
+  console.log('[ExpertV8] Connexion Supabase + auto-création du profil ✦ (exp-v16)');
 })();
 </script>
 
