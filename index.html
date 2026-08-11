@@ -8385,5 +8385,188 @@ FORMAT DE RÉPONSE :
   console.log('[ExpertV6] Session Supabase + diagnostic + fiche + rituels ✦');
 })();
 </script>
+<!-- ═══ MANNYELA EXPERTE — FIX v7 : ELYA affichage + messagerie Supabase temps réel ═══ -->
+<script data-mannyela-expert-v7="1">
+(function(){
+  'use strict';
+
+  function sb(){ return window._supabaseClient || window.supabase || null; }
+  function norm(v){ return String(v==null?'':v).trim().toLowerCase(); }
+  function myEmail(){ try{ return norm(expert && expert.email); }catch(_){ return ''; } }
+  function myName(){ try{ return (expert && (expert.name||expert.email)) || ''; }catch(_){ return ''; } }
+  function logErr(ctx,e){ try{ console.error('[ExpertV7] '+ctx, e); }catch(_){} }
+  function toast(m){ try{ if(typeof notif==='function'){ notif(m); return; } }catch(_){} try{ console.log('[ExpertV7]',m); }catch(_){} }
+  function clientesList(){ try{ return (typeof state!=='undefined' && Array.isArray(state.clientes)) ? state.clientes : []; }catch(_){ return []; } }
+  function clientNameByEmail(em){ var h=clientesList().find(function(x){ return norm(x.email)===norm(em); }); return h ? (h.nom||em) : ''; }
+  // id numérique stable à partir de l'e-mail (renderMessages attend un id numérique)
+  function hashId(s){ s=norm(s); var h=0; for(var i=0;i<s.length;i++){ h=((h<<5)-h)+s.charCodeAt(i); h|=0; } return Math.abs(h)||1; }
+  function fmtTime(iso){ try{ var d=iso?new Date(iso):new Date(); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }catch(_){ return ''; } }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // A) CORRECTIF ELYA — le message ne « disparaît » plus au 1er envoi.
+  //    La zone #elya-pro-chat-area n'existe qu'après le 1er message ;
+  //    on force un rendu complet de l'onglet si elle est absente.
+  // ──────────────────────────────────────────────────────────────────────
+  (function patchElya(){
+    function apply(){
+      if (typeof renderElyaProChat!=='function' || renderElyaProChat.__v7) return;
+      var orig = renderElyaProChat;
+      window.renderElyaProChat = function(){
+        var area = document.getElementById('elya-pro-chat-area');
+        if (!area){
+          try{ if (typeof renderTab==='function') renderTab('elya'); }catch(_){}
+          area = document.getElementById('elya-pro-chat-area');
+          if (!area) return;
+        }
+        return orig.apply(this, arguments);
+      };
+      window.renderElyaProChat.__v7 = true;
+    }
+    setTimeout(apply,0); setTimeout(apply,1500); setTimeout(apply,3000);
+  })();
+
+  // ──────────────────────────────────────────────────────────────────────
+  // B) MESSAGERIE réelle (table Supabase public.messages)
+  // ──────────────────────────────────────────────────────────────────────
+  window._msgLoaded = false;
+
+  async function loadMessages(rerender){
+    var c = sb(); if (!c || !c.from) return;
+    var em = myEmail(); if (!em) return;
+    try{
+      var r = await c.from('messages').select('*').ilike('expert_email', em).order('created_at',{ascending:true});
+      if (r.error){ logErr('Chargement messages', r.error); return; }
+      var rows = r.data || [];
+      var byClient = {};
+      rows.forEach(function(m){
+        var ce = norm(m.client_email); if(!ce) return;
+        (byClient[ce] = byClient[ce] || []).push(m);
+      });
+      var threads = Object.keys(byClient).map(function(ce){
+        var msgs = byClient[ce];
+        var nom = clientNameByEmail(ce) || msgs[0].client_nom || ce;
+        var unread = msgs.filter(function(m){ return norm(m.from_role)==='cliente' && !m.lu; }).length;
+        return {
+          id: hashId(ce), clientEmail: ce, with: nom,
+          avatar: ((nom||'?')[0]||'?').toUpperCase(), unread: unread,
+          conv: msgs.map(function(m){
+            return { sender: (norm(m.from_role)==='experte'?'experte':'cliente'), text: m.texte||'', time: fmtTime(m.created_at) };
+          })
+        };
+      });
+      // tri : fils avec activité récente en haut
+      threads.sort(function(a,b){ return (b.conv.length?1:0)-(a.conv.length?1:0); });
+      try{ state.messages = threads; }catch(_){}
+      window._msgLoaded = true;
+      if (rerender!==false){ try{ if (typeof currentTab!=='undefined' && currentTab==='messages' && typeof renderTab==='function') renderTab('messages'); }catch(_){} }
+    }catch(e){ logErr('loadMessages', e); }
+  }
+  window.mannyelaLoadMessages = loadMessages;
+
+  async function markThreadRead(clientEmail){
+    var c = sb(); if(!c) return; var em = myEmail(); if(!em) return;
+    try{ await c.from('messages').update({ lu:true }).ilike('expert_email', em).ilike('client_email', norm(clientEmail)).eq('from_role','cliente').eq('lu', false); }catch(e){ logErr('markThreadRead', e); }
+  }
+
+  // Envoi dans un fil existant (bouton / Entrée dans la conversation ouverte)
+  window.envoyerMessage = async function(convId){
+    var input = document.getElementById('msg-input');
+    var text = input && input.value ? input.value.trim() : '';
+    if (!text) return;
+    var conv = (state.messages||[]).find(function(m){ return m.id===convId; });
+    if (!conv){ return; }
+    if (input) input.value='';
+    var c = sb(); var em = myEmail();
+    if (!c || !em){ toast('⚠ Session indisponible — message non envoyé'); return; }
+    try{
+      var ins = await c.from('messages').insert({
+        expert_email: em, client_email: conv.clientEmail,
+        expert_nom: myName()||null, client_nom: conv.with||null,
+        from_role: 'experte', texte: text, lu: false
+      }).select();
+      if (ins.error){ toast('⚠ Message non envoyé : '+(ins.error.message||'')); return; }
+      conv.conv.push({ sender:'experte', text:text, time:fmtTime() });
+      try{ if (typeof renderTab==='function') renderTab('messages'); }catch(_){}
+      setTimeout(function(){ var el=document.getElementById('conv-scroll'); if(el) el.scrollTop=el.scrollHeight; },60);
+    }catch(e){ toast('⚠ Message non envoyé'); logErr('envoyerMessage', e); }
+  };
+
+  // Envoi d'un nouveau message (modale « Nouveau message »)
+  window.envoyerNouveauMsg = async function(){
+    var destEl = document.getElementById('nm-dest');
+    var txtEl  = document.getElementById('nm-texte');
+    var dest = destEl && destEl.value ? destEl.value.trim() : '';
+    var texte = txtEl && txtEl.value ? txtEl.value.trim() : '';
+    if (!dest){ toast('Indiquez le nom de la cliente'); return; }
+    if (!texte){ toast('Écrivez un message'); return; }
+    var cli = clientesList().find(function(x){ return norm(x.nom)===norm(dest) || norm(x.email)===norm(dest); });
+    var email = cli ? norm(cli.email) : (dest.indexOf('@')>0 ? norm(dest) : '');
+    if (!email){ toast('⚠ Cette cliente n’a pas d’e-mail — ajoutez-le dans sa fiche avant d’écrire.'); return; }
+    var c = sb(); var em = myEmail();
+    if (!c || !em){ toast('⚠ Session indisponible — message non envoyé'); return; }
+    try{
+      var ins = await c.from('messages').insert({
+        expert_email: em, client_email: email,
+        expert_nom: myName()||null, client_nom: (cli?cli.nom:dest)||null,
+        from_role: 'experte', texte: texte, lu: false
+      }).select();
+      if (ins.error){ toast('⚠ Message non envoyé : '+(ins.error.message||'')); return; }
+      var modal = document.getElementById('modal-nouveau-msg'); if (modal) modal.remove();
+      toast('Message envoyé à '+dest+' ✦');
+      await loadMessages(false);
+      try{ state.activeConvId = hashId(email); }catch(_){}
+      if (typeof showTab==='function') showTab('messages');
+    }catch(e){ toast('⚠ Message non envoyé'); logErr('envoyerNouveauMsg', e); }
+  };
+
+  // Chargement paresseux quand on ouvre l'onglet + marquage « lu »
+  (function wrapRenderMessages(){
+    function apply(){
+      if (typeof renderMessages!=='function' || renderMessages.__v7) return;
+      var orig = renderMessages;
+      window.renderMessages = function(){
+        if (!window._msgLoaded){ loadMessages(); }
+        try{
+          var conv = state.activeConvId ? (state.messages||[]).find(function(m){return m.id===state.activeConvId;}) : null;
+          if (conv && conv.unread>0){ markThreadRead(conv.clientEmail); }
+        }catch(_){}
+        return orig.apply(this, arguments);
+      };
+      window.renderMessages.__v7 = true;
+    }
+    setTimeout(apply,0); setTimeout(apply,1500);
+  })();
+
+  // Temps réel : nouveaux messages entrants (réponses des clientes)
+  function subscribe(){
+    var c = sb(); var em = myEmail();
+    if (!c || !c.channel || !em || window._msgChannel) return;
+    try{
+      window._msgChannel = c.channel('exp-messages-'+em)
+        .on('postgres_changes', { event:'INSERT', schema:'public', table:'messages' }, function(payload){
+          var row = payload && payload.new; if(!row) return;
+          if (norm(row.expert_email)!==em) return;
+          loadMessages();
+        })
+        .subscribe();
+    }catch(e){ logErr('subscribe', e); }
+  }
+
+  // Démarrage : dès qu'une session experte est prête, on charge + on s'abonne.
+  var tries=0;
+  var boot = setInterval(function(){
+    tries++;
+    if (sb() && myEmail()){
+      loadMessages(false);
+      subscribe();
+      clearInterval(boot);
+    }
+    if (tries>40) clearInterval(boot); // ~40s max
+  }, 1000);
+
+  console.log('[ExpertV7] ELYA fix + messagerie Supabase ✦');
+})();
+</script>
+
 </body>
 </html>
