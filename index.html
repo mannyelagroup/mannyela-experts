@@ -6317,7 +6317,7 @@ FORMAT DE RÉPONSE :
   <script src="auth.js"></script>
 
   <!-- Marqueur de version -->
-  <div id="exp-version" style="position:fixed;bottom:4px;left:6px;font-size:9px;color:rgba(196,149,106,0.5);font-family:'Cinzel',serif;letter-spacing:0.12em;z-index:99999;pointer-events:none;">✦ exp-v13 · 11-08</div>
+  <div id="exp-version" style="position:fixed;bottom:4px;left:6px;font-size:9px;color:rgba(196,149,106,0.5);font-family:'Cinzel',serif;letter-spacing:0.12em;z-index:99999;pointer-events:none;">✦ exp-v14 · 11-08</div>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
        CONNEXION EXPERTE "local-first" — placé en TOUT DERNIER pour neutraliser
@@ -8565,6 +8565,67 @@ FORMAT DE RÉPONSE :
   }, 1000);
 
   console.log('[ExpertV7] ELYA fix + messagerie Supabase ✦');
+})();
+</script>
+
+<!-- ═══ MANNYELA EXPERTE — FIX v8 : connexion Supabase + auto-création du profil ═══ -->
+<!--   Corrige « experte confirmée mais impossible de se connecter » :
+        à l'inscription (e-mail non confirmé), l'insertion du profil est bloquée
+        par la RLS (rôle anon). On (re)crée donc le profil à la connexion,
+        quand l'experte est authentifiée. -->
+<script data-mannyela-expert-v8="1">
+(function(){
+  'use strict';
+  function sb(){ return window._supabaseClient || window.supabase || null; }
+  function norm(v){ return String(v==null?'':v).trim().toLowerCase(); }
+
+  function apply(){
+    if (window._expCloudLogin && window._expCloudLogin.__v8) return;
+
+    window._expCloudLogin = async function(email, pwd){
+      var c = sb();
+      if (!c || !c.auth) return { ok:false, reason:'no-supabase' };
+      email = norm(email);
+      try{
+        var si = await c.auth.signInWithPassword({ email: email, password: pwd });
+        if (si.error || !si.data || !si.data.user){
+          var m = (si.error && si.error.message) || '';
+          if (/not confirm/i.test(m)) return { ok:false, reason:'email-not-confirmed' };
+          return { ok:false, reason:'bad-credentials' };
+        }
+
+        // Profil déjà présent ?
+        var pr = await c.from('profils_expertes').select('*').eq('email', email).maybeSingle();
+        if (pr.data){
+          // Un compte réseau auto-provisionné ne doit pas rester bloqué « inactif ».
+          if (pr.data.actif === false && norm(pr.data.badge) !== 'candidature'){
+            try{ await c.from('profils_expertes').update({ actif:true }).eq('email', email); }catch(_){}
+            pr.data.actif = true;
+          }
+          return { ok:true, profile: pr.data };
+        }
+
+        // Aucun profil (bloqué à l'inscription par la RLS) → on le crée maintenant.
+        var meta = (si.data.user && si.data.user.user_metadata) || {};
+        var payload = {
+          email: email,
+          name: meta.name || email.split('@')[0],
+          niveau: 'Experte Réseau', badge: 'reseau', type_compte: 'reseau',
+          actif: true, updated_at: new Date().toISOString()
+        };
+        var ins = await c.from('profils_expertes').insert(payload).select().maybeSingle();
+        if (ins.data) return { ok:true, profile: ins.data };
+        // Même si l'insert échoue, on laisse entrer avec un profil minimal (pas de blocage).
+        return { ok:true, profile: payload };
+      }catch(e){
+        return { ok:false, reason: (e && e.message) || 'error' };
+      }
+    };
+    window._expCloudLogin.__v8 = true;
+  }
+
+  setTimeout(apply, 0); setTimeout(apply, 1600); setTimeout(apply, 3200);
+  console.log('[ExpertV8] Connexion Supabase + auto-création du profil ✦ (exp-v14)');
 })();
 </script>
 
