@@ -390,6 +390,7 @@
       document.head.appendChild(script);
     })();
   </script>
+  <script>/* fix: définit expertState global pour éviter ReferenceError à la connexion */window.expertState = window.expertState || { isLoggedIn:false, email:null, loginMethod:null };</script>
 </head>
 <body>
 
@@ -6317,7 +6318,7 @@ FORMAT DE RÉPONSE :
   <script src="auth.js"></script>
 
   <!-- Marqueur de version -->
-  <div id="exp-version" style="position:fixed;bottom:4px;left:6px;font-size:9px;color:rgba(196,149,106,0.5);font-family:'Cinzel',serif;letter-spacing:0.12em;z-index:99999;pointer-events:none;">✦ exp-v16 · 11-08</div>
+  <div id="exp-version" style="position:fixed;bottom:4px;left:6px;font-size:9px;color:rgba(196,149,106,0.5);font-family:'Cinzel',serif;letter-spacing:0.12em;z-index:99999;pointer-events:none;">✦ exp-v18 · 11-08</div>
 
   <!-- ═══════════════════════════════════════════════════════════════════════
        CONNEXION EXPERTE "local-first" — placé en TOUT DERNIER pour neutraliser
